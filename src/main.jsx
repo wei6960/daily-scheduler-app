@@ -783,6 +783,13 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
     });
   }
 
+  function updateReportEntry(entryId, patch) {
+    setState({
+      ...state,
+      reportEntries: state.reportEntries.map((entry) => (entry.id === entryId ? { ...entry, ...patch, updatedAt: new Date().toISOString() } : entry)),
+    });
+  }
+
   function deleteReportEntry(entryId) {
     setState({
       ...state,
@@ -1033,8 +1040,11 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
         entries={reportEntries}
         canEdit={true}
         onAddEntry={addReportEntry}
+        onUpdateEntry={updateReportEntry}
         onDeleteEntry={deleteReportEntry}
         editorLabel="主任"
+        viewer={session}
+        setNotice={setNotice}
       />
 
       <BroadcastPanel state={state} setState={setState} session={session} setNotice={setNotice} />
@@ -1189,8 +1199,9 @@ function EmployeeView({ state, setState, session, setSession, setNotice }) {
   const groupEmployees = state.employees.filter((employee) => employee.groupCode === session.user.groupCode);
   const activeStaff = activeAttendanceRecords(state.attendance, groupEmployees.map((employee) => employee.id));
   const leaveEntries = state.leaveEntries.filter((entry) => entry.groupCode === session.user.groupCode);
+  const reportEntries = state.reportEntries.filter((entry) => entry.groupCode === session.user.groupCode);
   const canEditLeave = isLeaveEditor(session.user);
-  const canEditSchedules = isScheduleEditor(session.user);
+  const canManageSchedules = Boolean(session.role === "director" || session.user.isManager);
 
   function clock(type) {
     const today = todayDate();
@@ -1276,6 +1287,45 @@ function EmployeeView({ state, setState, session, setSession, setNotice }) {
     });
   }
 
+  function updateLeaveEntry(entryId, patch) {
+    setState({
+      ...state,
+      leaveEntries: state.leaveEntries.map((entry) => (entry.id === entryId ? { ...entry, ...patch, updatedAt: new Date().toISOString() } : entry)),
+    });
+  }
+
+  function addReportEntry(entry) {
+    setState({
+      ...state,
+      reportEntries: [
+        {
+          id: crypto.randomUUID(),
+          groupCode: session.user.groupCode,
+          createdBy: session.user.id,
+          createdByName: session.user.name,
+          createdByRole: session.role,
+          createdAt: new Date().toISOString(),
+          ...entry,
+        },
+        ...state.reportEntries,
+      ],
+    });
+  }
+
+  function deleteReportEntry(entryId) {
+    setState({
+      ...state,
+      reportEntries: state.reportEntries.filter((entry) => entry.id !== entryId),
+    });
+  }
+
+  function updateReportEntry(entryId, patch) {
+    setState({
+      ...state,
+      reportEntries: state.reportEntries.map((entry) => (entry.id === entryId ? { ...entry, ...patch, updatedAt: new Date().toISOString() } : entry)),
+    });
+  }
+
   return (
     <section className="dashboard-grid employee-dashboard">
       <div className="panel attendance-card">
@@ -1313,8 +1363,11 @@ function EmployeeView({ state, setState, session, setSession, setNotice }) {
         entries={reportEntries}
         canEdit={true}
         onAddEntry={addReportEntry}
+        onUpdateEntry={updateReportEntry}
         onDeleteEntry={deleteReportEntry}
         editorLabel={session.user.name}
+        viewer={session}
+        setNotice={setNotice}
       />
 
       <ScheduleList state={state} setState={setState} viewer={session} setNotice={setNotice} canManage={canManageSchedules} />
@@ -1674,32 +1727,24 @@ function LeavePanel({ entries, canEdit, onAddEntry, onUpdateEntry, onDeleteEntry
   );
 }
 
-function ReportPanel({ entries, canEdit, onAddEntry, onDeleteEntry, editorLabel }) {
-  const [draft, setDraft] = useState({ targetGrade: "全體", note: "" });
+function ReportPanel({ entries, canEdit, onAddEntry, onUpdateEntry, onDeleteEntry, editorLabel, viewer, setNotice }) {
+  const [draft, setDraft] = useState({ note: "" });
 
   function submit(event) {
     event.preventDefault();
     if (!draft.note.trim()) return;
     onAddEntry({
-      targetGrade: draft.targetGrade,
       note: draft.note.trim(),
     });
-    setDraft({ targetGrade: "全體", note: "" });
+    setDraft({ note: "" });
   }
 
   return (
     <div className="panel report-panel">
       <SectionTitle icon={<MessageCircle size={20} />} title="未到班回報" />
-      <p className="muted">這裡的內容會讓同群組所有人都看得到，用來回報今天哪些同學還沒到班。</p>
+      <p className="muted">這裡的內容會讓同群組所有人都看得到，格式和留言板一致，只是專門用來回報未到班。</p>
       {canEdit ? (
-        <form className="report-form" onSubmit={submit}>
-          <label>
-            送給
-            <select value={draft.targetGrade} onChange={(event) => setDraft({ ...draft, targetGrade: event.target.value })}>
-              <option value="全體">全體未到班同學</option>
-              {LEAVE_GRADES.map((grade) => <option key={grade} value={grade}>{grade}</option>)}
-            </select>
-          </label>
+        <form className="board-form report-form" onSubmit={submit}>
           <label className="wide">
             回報內容
             <textarea value={draft.note} onChange={(event) => setDraft({ ...draft, note: event.target.value })} placeholder="例如：今天 08:30 前請到、未到班請回報原因。" />
@@ -1713,15 +1758,35 @@ function ReportPanel({ entries, canEdit, onAddEntry, onDeleteEntry, editorLabel 
         {entries.length ? entries.map((entry) => (
           <article className="report-item" key={entry.id}>
             <div>
-              <strong>{entry.targetGrade === "全體" ? "全體未到班同學" : entry.targetGrade}</strong>
-              <p>{entry.note}</p>
+              <strong>未到班回報</strong>
+              <p>{entry.note || entry.text}</p>
               <small>{entry.createdByName || "系統"}｜{new Date(entry.createdAt).toLocaleString("zh-TW")}</small>
             </div>
-            {canEdit && (
-              <button className="icon-button danger" onClick={() => onDeleteEntry(entry.id)} title="刪除回報">
-                <Trash2 size={18} />
-              </button>
-            )}
+            <div className="inline-actions">
+              {(viewer.role === "director" || entry.createdBy === viewer.user.id) && (
+                <>
+                  <button className="secondary-action small-action" type="button" onClick={() => {
+                    const nextNote = window.prompt("回報內容", entry.note || entry.text || "");
+                    if (nextNote === null) return;
+                    if (!nextNote.trim()) {
+                      window.alert("回報內容不能空白。");
+                      return;
+                    }
+                    onUpdateEntry(entry.id, { note: nextNote.trim(), text: nextNote.trim() });
+                    setNotice("回報已更新。");
+                  }}>
+                    編輯
+                  </button>
+                  <button className="secondary-action danger-action small-action" type="button" onClick={() => {
+                    if (!window.confirm("確定要刪除這則回報嗎？")) return;
+                    onDeleteEntry(entry.id);
+                    setNotice("回報已刪除。");
+                  }}>
+                    刪除
+                  </button>
+                </>
+              )}
+            </div>
           </article>
         )) : <p className="muted">目前沒有未到班回報。</p>}
       </div>
