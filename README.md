@@ -55,6 +55,13 @@ npm run build
 npm run deploy
 ```
 
+GitHub Pages 也支援自動部署：到 GitHub repo 的 `Settings` → `Secrets and variables` → `Actions` 新增：
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+
+之後推送到 `master` 時會自動部署雲端同步版。
+
 有設定 Supabase 時，主任、員工、群組代碼、排程、考勤、留言會同步到雲端。未設定時會顯示「本機模式」，資料只存在目前瀏覽器。
 
 目前通知仍是瀏覽器通知與 Email 草稿。真正背景手機推播或自動寄信，需要再接通知服務。
