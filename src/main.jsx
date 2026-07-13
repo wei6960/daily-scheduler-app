@@ -247,6 +247,38 @@ function App() {
     }
   });
   const [notice, setNotice] = useState("");
+  const [dismissedNoticeIds, setDismissedNoticeIds] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("dismissed-app-notices") || "[]");
+    } catch {
+      return [];
+    }
+  });
+
+  const appNotices = useMemo(() => {
+    if (!session) return [];
+    const scheduleNotices = state.schedules
+      .filter((item) => isVisibleTo(item, session))
+      .map((item) => ({
+        id: `schedule-${item.id}-${scheduleDate(item)}`,
+        type: "排程",
+        title: item.title,
+        text: `${item.type === "fixed" ? "每日" : item.date} ${item.time}｜${item.detail}`,
+        createdAt: `${scheduleDate(item)}T${item.time}:00`,
+      }));
+    const messageNotices = state.messages
+      .filter((message) => isMessageVisible(message, session))
+      .map((message) => ({
+        id: `message-${message.id}`,
+        type: "群發",
+        title: message.title,
+        text: message.text,
+        createdAt: message.createdAt,
+      }));
+    return [...messageNotices, ...scheduleNotices].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }, [session, state.messages, state.schedules]);
+
+  const unreadNotices = appNotices.filter((item) => !dismissedNoticeIds.includes(item.id));
 
   useEffect(() => {
     if (session) {
@@ -308,6 +340,16 @@ function App() {
     localStorage.setItem("sent-message-notices", JSON.stringify([...sent]));
   }, [session, state.messages]);
 
+  useEffect(() => {
+    localStorage.setItem("dismissed-app-notices", JSON.stringify(dismissedNoticeIds));
+  }, [dismissedNoticeIds]);
+
+  useEffect(() => {
+    if (!unreadNotices.length) return;
+    setNotice(`有 ${unreadNotices.length} 則新通知，請查看通知中心。`);
+    navigator.vibrate?.(150);
+  }, [unreadNotices.length]);
+
   function logout() {
     setSession(null);
     setNotice("已登出。");
@@ -335,6 +377,7 @@ function App() {
       ) : (
         <>
           <Billboard state={state} viewer={session} />
+          <NoticeCenter notices={appNotices} unreadCount={unreadNotices.length} onClear={() => setDismissedNoticeIds(appNotices.map((item) => item.id))} />
           {session.role === "director" ? (
             <DirectorView state={state} setState={setState} session={session} setSession={setSession} setNotice={setNotice} />
           ) : (
@@ -518,6 +561,29 @@ function Billboard({ state, viewer }) {
         <span>{headline.title}</span>
       </div>
       <p>{headline.detail}</p>
+    </section>
+  );
+}
+
+function NoticeCenter({ notices, unreadCount, onClear }) {
+  return (
+    <section className={`notice-center ${unreadCount ? "has-unread" : ""}`}>
+      <div className="notice-center-head">
+        <div>
+          <strong>通知中心</strong>
+          <span>{unreadCount ? `${unreadCount} 則未讀` : "目前沒有未讀"}</span>
+        </div>
+        <button className="secondary-action" type="button" onClick={onClear}>全部已讀</button>
+      </div>
+      <div className="notice-strip">
+        {notices.slice(0, 5).map((item) => (
+          <article className="notice-pill" key={item.id}>
+            <b>{item.type}</b>
+            <span>{item.title}</span>
+          </article>
+        ))}
+        {!notices.length && <span className="muted">目前沒有通知。</span>}
+      </div>
     </section>
   );
 }
