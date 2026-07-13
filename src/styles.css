@@ -96,6 +96,26 @@ button:disabled {
   color: var(--navy);
 }
 
+.sync-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 12px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.sync-badge.cloud {
+  color: #fffdf8;
+  background: var(--sage);
+}
+
+.sync-badge.local {
+  color: var(--muted);
+  background: #e8dfd1;
+}
+
 .billboard {
   margin-top: 18px;
   border-radius: 8px;
@@ -543,6 +563,13 @@ textarea:focus {
   color: var(--terracotta);
 }
 
+.code-edit-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 140px;
+  gap: 10px;
+  margin-top: 10px;
+}
+
 .tab-switch {
   margin-bottom: 0;
 }
@@ -748,6 +775,10 @@ textarea:focus {
   }
 
   .board-form {
+    grid-template-columns: 1fr;
+  }
+
+  .code-edit-form {
     grid-template-columns: 1fr;
   }
 }

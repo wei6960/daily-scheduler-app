@@ -37,4 +37,24 @@ npm run dev
 npm run build
 ```
 
-目前資料存在瀏覽器 `localStorage`，正式上線若要多人同步、背景手機推播或自動寄信，需要再接後端、資料庫與通知服務。
+## Supabase 雲端同步
+
+1. 到 Supabase 建立專案。
+2. 開啟 SQL Editor，執行 `supabase/schema.sql`。
+3. 複製 `.env.example` 成 `.env`，填入：
+
+```bash
+VITE_SUPABASE_URL=你的 Supabase Project URL
+VITE_SUPABASE_ANON_KEY=你的 Supabase anon public key
+```
+
+4. 重新建置與部署：
+
+```bash
+npm run build
+npm run deploy
+```
+
+有設定 Supabase 時，主任、員工、群組代碼、排程、考勤、留言會同步到雲端。未設定時會顯示「本機模式」，資料只存在目前瀏覽器。
+
+目前通知仍是瀏覽器通知與 Email 草稿。真正背景手機推播或自動寄信，需要再接通知服務。

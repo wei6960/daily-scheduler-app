@@ -25,6 +25,7 @@ import {
   X,
 } from "lucide-react";
 import "./styles.css";
+import { cloudEnabled, groupCodeExists, loadCloudState, saveCloudState } from "./cloudStore";
 
 const STORAGE_KEY = "daily-scheduler-attendance-v3";
 const LEGACY_KEYS = ["daily-scheduler-attendance-v2", "daily-scheduler-attendance-v1"];
@@ -184,12 +185,45 @@ function statusForEmployee(attendance, employeeId) {
 
 function useAppState() {
   const [state, setState] = useState(readState);
-  useEffect(() => writeState(state), [state]);
-  return [state, setState];
+  const [cloudStatus, setCloudStatus] = useState(cloudEnabled ? "連線中" : "本機模式");
+  const [cloudReady, setCloudReady] = useState(!cloudEnabled);
+
+  useEffect(() => {
+    let active = true;
+    if (!cloudEnabled) return undefined;
+    loadCloudState(readState())
+      .then((cloudState) => {
+        if (!active) return;
+        const normalized = normalizeState(cloudState);
+        setState(normalized);
+        writeState(normalized);
+        setCloudStatus("雲端同步");
+        setCloudReady(true);
+      })
+      .catch(() => {
+        if (!active) return;
+        setCloudStatus("雲端連線失敗，暫用本機");
+        setCloudReady(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    writeState(state);
+    if (!cloudEnabled || !cloudReady) return;
+    const timer = window.setTimeout(() => {
+      saveCloudState(state).catch(() => setCloudStatus("雲端同步失敗"));
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [state, cloudReady]);
+
+  return [state, setState, cloudStatus];
 }
 
 function App() {
-  const [state, setState] = useAppState();
+  const [state, setState, cloudStatus] = useAppState();
   const [session, setSession] = useState(() => {
     try {
       return JSON.parse(sessionStorage.getItem("daily-scheduler-session") || "null");
@@ -264,6 +298,7 @@ function App() {
       </section>
 
       {notice && <div className="toast">{notice}</div>}
+      <div className={`sync-badge ${cloudEnabled ? "cloud" : "local"}`}>{cloudStatus}</div>
 
       {!session ? (
         <AuthPanel state={state} setState={setState} setSession={setSession} setNotice={setNotice} />
@@ -288,7 +323,7 @@ function AuthPanel({ state, setState, setSession, setNotice }) {
   const [registerRole, setRegisterRole] = useState("employee");
   const [form, setForm] = useState({ name: "", username: "", password: "", email: "", groupCode: "", groupName: "" });
 
-  function submit(event) {
+  async function submit(event) {
     event.preventDefault();
     const username = form.username.trim();
     const password = form.password.trim();
@@ -311,7 +346,8 @@ function AuthPanel({ state, setState, setSession, setNotice }) {
           setNotice("主任註冊必須建立群組代碼。");
           return;
         }
-        if (state.groups.some((group) => group.code === groupCode)) {
+        const usedInCloud = await groupCodeExists(groupCode);
+        if (state.groups.some((group) => group.code === groupCode) || usedInCloud) {
           setNotice("這個群組代碼已經存在，請換一個。");
           return;
         }
@@ -460,6 +496,7 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
   const [task, setTask] = useState({ title: "", detail: "", type: "fixed", date: todayDate(), time: "09:00", audience: "all", channel: "大屏幕 + 手機訊息 + Email" });
   const [directorForm, setDirectorForm] = useState({ name: "", username: "", password: "", email: "" });
   const [directorTab, setDirectorTab] = useState("dashboard");
+  const [groupCodeDraft, setGroupCodeDraft] = useState(session.user.groupCode || "");
   const groupEmployees = state.employees.filter((employee) => employee.groupCode === session.user.groupCode);
   const attendanceRows = groupEmployees.map((employee) => ({ employee, ...statusForEmployee(state.attendance, employee.id) }));
   const groupEmployeeIds = new Set(groupEmployees.map((employee) => employee.id));
@@ -581,6 +618,40 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
     setSession({ ...session, user: updatedUser });
   }
 
+  async function updateGroupCode(event) {
+    event.preventDefault();
+    const nextCode = groupCodeDraft.trim().toUpperCase();
+    const oldCode = session.user.groupCode;
+    if (!nextCode) {
+      setNotice("群組代碼不能空白。");
+      return;
+    }
+    if (nextCode === oldCode) {
+      setNotice("群組代碼沒有變更。");
+      return;
+    }
+    const usedInCloud = await groupCodeExists(nextCode);
+    if (state.groups.some((group) => group.code === nextCode) || usedInCloud) {
+      setNotice("這個群組代碼已被使用，請換一個。");
+      return;
+    }
+    const replaceGroup = (item) => item.groupCode === oldCode ? { ...item, groupCode: nextCode } : item;
+    const groups = state.groups.map((group) => group.code === oldCode ? { ...group, code: nextCode, name: group.name || `${nextCode} 群組` } : group);
+    const nextState = {
+      ...state,
+      groups,
+      employees: state.employees.map(replaceGroup),
+      directors: state.directors.map(replaceGroup),
+      schedules: state.schedules.map(replaceGroup),
+      messages: state.messages.map(replaceGroup),
+      boardPosts: state.boardPosts.map(replaceGroup),
+    };
+    const updatedUser = nextState.directors.find((director) => director.id === session.user.id);
+    setState(nextState);
+    setSession({ ...session, user: updatedUser });
+    setNotice(`群組代碼已改為 ${nextCode}。`);
+  }
+
   function deleteCurrentDirector() {
     const groupDirectors = state.directors.filter((director) => director.groupCode === session.user.groupCode);
     if (groupDirectors.length <= 1 && groupEmployees.length > 0) {
@@ -600,6 +671,10 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
           <span>群組代碼</span>
           <strong>{session.user.groupCode}</strong>
           <small>請把這組代碼提供給員工註冊加入。</small>
+          <form className="code-edit-form" onSubmit={updateGroupCode}>
+            <input value={groupCodeDraft} onChange={(event) => setGroupCodeDraft(event.target.value)} placeholder="修改群組代碼" />
+            <button className="secondary-action" type="submit">更新代碼</button>
+          </form>
         </div>
         <div className="segmented slim tab-switch">
           <button type="button" className={directorTab === "dashboard" ? "selected" : ""} onClick={() => setDirectorTab("dashboard")}>主任首頁</button>
@@ -880,6 +955,18 @@ function EmployeeView({ state, setState, session, setSession, setNotice }) {
     setSession({ ...session, user: updatedUser });
   }
 
+  function deleteOwnEmployeeAccount() {
+    if (!window.confirm("確定要刪除自己的員工帳號嗎？刪除後會立即登出，考勤與排程回覆也會一併移除。")) return;
+    setState({
+      ...state,
+      employees: state.employees.filter((employee) => employee.id !== session.user.id),
+      attendance: state.attendance.filter((record) => record.employeeId !== session.user.id),
+      scheduleResponses: state.scheduleResponses.filter((response) => response.employeeId !== session.user.id),
+    });
+    setSession(null);
+    setNotice("員工帳號已刪除。");
+  }
+
   return (
     <section className="dashboard-grid employee-dashboard">
       <div className="panel attendance-card">
@@ -911,6 +998,9 @@ function EmployeeView({ state, setState, session, setSession, setNotice }) {
           )) : <span>今日無排班</span>}
         </div>
         <p className="muted">上班時間由主任端設定。開啟瀏覽器通知後，系統會在今日第一段上班前 10 分鐘提醒。</p>
+        <button className="secondary-action danger-action" type="button" onClick={deleteOwnEmployeeAccount}>
+          <Trash2 size={16} /> 刪除我的員工帳號
+        </button>
       </div>
     </section>
   );
