@@ -445,14 +445,14 @@ function App() {
           <h1>每日重點、通知與上下班狀態集中管理</h1>
         </div>
         <div className="hero-highlight">
-          <span className="hero-highlight-label">????</span>
+          <span className="hero-highlight-label">即時提醒</span>
           {heroNotice ? (
             <>
               <strong>{heroNotice.title}</strong>
               <p>{heroNotice.text}</p>
             </>
           ) : (
-            <p>??????????????????????</p>
+            <p>登入後會顯示最新排程與注意事項。</p>
           )}
         </div>
         {session && (
