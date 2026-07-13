@@ -1199,7 +1199,7 @@ function BroadcastPanel({ state, setState, session, setNotice }) {
   function sendMessage(event) {
     event.preventDefault();
     if (!draft.title.trim() || !draft.text.trim()) {
-      setNotice("?????????????");
+      setNotice("請填寫注意事項標題與內容。");
       return;
     }
     const previous = editingId ? state.messages.find((item) => item.id === editingId) : null;
@@ -1221,7 +1221,7 @@ function BroadcastPanel({ state, setState, session, setNotice }) {
     });
     setDraft({ title: "", text: "", audience: "all" });
     setEditingId("");
-    setNotice(editingId ? "????????" : "????????");
+    setNotice(editingId ? "注意事項已更新。" : "注意事項已送出。");
   }
 
   function startEdit(message) {
@@ -1232,11 +1232,11 @@ function BroadcastPanel({ state, setState, session, setNotice }) {
   function cancelEdit() {
     setEditingId("");
     setDraft({ title: "", text: "", audience: "all" });
-    setNotice("??????");
+    setNotice("已取消編輯。");
   }
 
   function deleteMessage(messageId) {
-    if (!window.confirm("?????????????")) return;
+    if (!window.confirm("確定要刪除這則注意事項嗎？")) return;
     setState({
       ...state,
       messages: state.messages.filter((item) => item.id !== messageId),
@@ -1245,26 +1245,26 @@ function BroadcastPanel({ state, setState, session, setNotice }) {
       setEditingId("");
       setDraft({ title: "", text: "", audience: "all" });
     }
-    setNotice("????????");
+    setNotice("注意事項已刪除。");
   }
 
   return (
     <div className="panel">
-      <SectionTitle icon={<Send size={20} />} title="??????" />
+      <SectionTitle icon={<Send size={20} />} title="注意事項發送" />
       <form onSubmit={sendMessage} className="compact-stack">
-        <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="??????" />
-        <textarea value={draft.text} onChange={(event) => setDraft({ ...draft, text: event.target.value })} placeholder="?????????????" />
+        <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="注意事項標題" />
+        <textarea value={draft.text} onChange={(event) => setDraft({ ...draft, text: event.target.value })} placeholder="要發送給員工的注意事項內容" />
         <select value={draft.audience} onChange={(event) => setDraft({ ...draft, audience: event.target.value })}>
-          <option value="all">????</option>
+          <option value="all">全體員工</option>
           {groupEmployees.map((employee) => (
             <option key={employee.id} value={employee.id}>{employee.name}</option>
           ))}
         </select>
         <div className="action-row notice-actions">
           {editingId ? (
-            <button className="secondary-action" type="button" onClick={cancelEdit}>????</button>
+            <button className="secondary-action" type="button" onClick={cancelEdit}>取消編輯</button>
           ) : null}
-          <button className="primary-action" type="submit"><Send size={18} /> {editingId ? "??" : "??"}</button>
+          <button className="primary-action" type="submit"><Send size={18} /> {editingId ? "更新" : "發送"}</button>
         </div>
       </form>
       <div className="message-list broadcast-message-list">
@@ -1273,14 +1273,14 @@ function BroadcastPanel({ state, setState, session, setNotice }) {
             <div>
               <strong>{message.title}</strong>
               <p>{message.text}</p>
-              <small>{new Date(message.updatedAt || message.createdAt).toLocaleString("zh-TW")}?{message.audience === "all" ? "????" : "????"}</small>
+              <small>{new Date(message.updatedAt || message.createdAt).toLocaleString("zh-TW")}｜{message.audience === "all" ? "全體員工" : "指定員工"}</small>
             </div>
             <div className="inline-actions">
-              <button className="secondary-action small-action" type="button" onClick={() => startEdit(message)}>??</button>
-              <button className="secondary-action danger-action small-action" type="button" onClick={() => deleteMessage(message.id)}>??</button>
+              <button className="secondary-action small-action" type="button" onClick={() => startEdit(message)}>編輯</button>
+              <button className="secondary-action danger-action small-action" type="button" onClick={() => deleteMessage(message.id)}>刪除</button>
             </div>
           </article>
-        )) : <p className="muted">?????????</p>}
+        )) : <p className="muted">目前沒有注意事項。</p>}
       </div>
     </div>
   );
@@ -1518,7 +1518,13 @@ function ScheduleList({ state, setState, viewer, setNotice, onDelete, canManage 
       setNotice("完成按鈕要到排程時間後才能按。");
       return;
     }
-    upsertResponse(item, viewer.user.id, { completedAt: nowStamp(), receivedAt: findResponse(item, viewer.user.id)?.receivedAt || nowStamp() });
+    const existing = findResponse(item, viewer.user.id);
+    if (existing?.completedAt) {
+      upsertResponse(item, viewer.user.id, { completedAt: "" });
+      setNotice("已取消完成狀態，主任端會同步看到。");
+      return;
+    }
+    upsertResponse(item, viewer.user.id, { completedAt: nowStamp(), receivedAt: existing?.receivedAt || nowStamp() });
     setNotice("已回覆完成，主任端會看得到。");
   }
 
@@ -1589,8 +1595,8 @@ function ScheduleList({ state, setState, viewer, setNotice, onDelete, canManage 
                     <button className="secondary-action small-action" onClick={() => markReceived(item)} disabled={Boolean(employeeResponse?.receivedAt)}>
                       <Check size={16} /> {employeeResponse?.receivedAt ? "已收到" : "收到"}
                     </button>
-                    <button className="primary-action small-action" onClick={() => markCompleted(item)} disabled={!canComplete || Boolean(employeeResponse?.completedAt)}>
-                      <CheckCircle2 size={16} /> {employeeResponse?.completedAt ? "已完成" : "完成"}
+                    <button className="primary-action small-action" onClick={() => markCompleted(item)} disabled={!canComplete}>
+                      <CheckCircle2 size={16} /> {employeeResponse?.completedAt ? "取消完成" : "完成"}
                     </button>
                   </>
                 )}
