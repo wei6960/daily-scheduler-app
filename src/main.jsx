@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
-  Bell,
   CalendarClock,
   Check,
   CheckCircle2,
@@ -25,18 +24,19 @@ import {
   X,
 } from "lucide-react";
 import "./styles.css";
-import { cloudEnabled, groupCodeExists, loadCloudState, saveCloudState, sendPushNotification, subscribeToWebPush } from "./cloudStore";
+import { cloudEnabled, groupCodeExists, loadCloudState, saveCloudState } from "./cloudStore";
 
 const STORAGE_KEY = "daily-scheduler-attendance-v3";
 const LEGACY_KEYS = ["daily-scheduler-attendance-v2", "daily-scheduler-attendance-v1"];
 const DIRECTOR_USER = "GMPJ";
 const DIRECTOR_PASSWORD = "6090";
+const LEAVE_GRADES = ["國一", "國二", "國三"];
 
 const defaultState = {
   groups: [{ code: "GMPJ", name: "GMPJ 團隊", createdAt: new Date().toISOString() }],
   employees: [
-    { id: "emp-1", groupCode: "GMPJ", name: "林怡君", username: "staff01", password: "1234", email: "staff01@example.com", workStartTime: "09:00", weeklySchedule: defaultWeeklySchedule(), createdAt: new Date().toISOString() },
-    { id: "emp-2", groupCode: "GMPJ", name: "陳柏宇", username: "staff02", password: "1234", email: "staff02@example.com", workStartTime: "09:00", weeklySchedule: defaultWeeklySchedule(), createdAt: new Date().toISOString() },
+    { id: "emp-1", groupCode: "GMPJ", name: "林怡君", username: "staff01", password: "1234", email: "staff01@example.com", workStartTime: "09:00", weeklySchedule: defaultWeeklySchedule(), isManager: false, isCounter: false, createdAt: new Date().toISOString() },
+    { id: "emp-2", groupCode: "GMPJ", name: "陳柏宇", username: "staff02", password: "1234", email: "staff02@example.com", workStartTime: "09:00", weeklySchedule: defaultWeeklySchedule(), isManager: false, isCounter: false, createdAt: new Date().toISOString() },
   ],
   directors: [{ id: "director-main", groupCode: "GMPJ", name: "主任", username: DIRECTOR_USER, password: DIRECTOR_PASSWORD, email: "director@example.com" }],
   schedules: [
@@ -49,13 +49,15 @@ const defaultState = {
       time: "09:00",
       audience: "all",
       groupCode: "GMPJ",
-      channel: "大屏幕 + 手機訊息 + Email",
+      channel: "大屏幕 + Email + 手機文字",
       createdBy: DIRECTOR_USER,
       createdAt: new Date().toISOString(),
     },
   ],
   attendance: [],
   scheduleResponses: [],
+  leaveEntries: [],
+  reportEntries: [],
   messages: [],
   boardPosts: [
     {
@@ -82,7 +84,16 @@ function defaultWeeklySchedule() {
 }
 
 function todayDate() {
-  return new Date().toISOString().slice(0, 10);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Taipei",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const year = parts.find((part) => part.type === "year")?.value || "0000";
+  const month = parts.find((part) => part.type === "month")?.value || "00";
+  const day = parts.find((part) => part.type === "day")?.value || "00";
+  return `${year}-${month}-${day}`;
 }
 
 function nowTime() {
@@ -102,6 +113,7 @@ function normalizeState(input) {
     groupCode: "GMPJ",
     weeklySchedule: defaultWeeklySchedule(),
     isManager: false,
+    isCounter: false,
     ...employee,
   }));
   const directors = (Array.isArray(source.directors) ? source.directors : defaultState.directors).map((director) => ({
@@ -114,7 +126,7 @@ function normalizeState(input) {
     date: item.date || todayDate(),
     time: item.time || "09:00",
     audience: item.audience || "all",
-    channel: item.channel || "大屏幕 + 手機訊息 + Email",
+    channel: item.channel || "大屏幕 + Email + 手機文字",
     groupCode: item.groupCode || "GMPJ",
     ...item,
   }));
@@ -130,6 +142,8 @@ function normalizeState(input) {
     schedules,
     attendance,
     scheduleResponses: source.scheduleResponses || [],
+    leaveEntries: source.leaveEntries || [],
+    reportEntries: source.reportEntries || [],
     messages: (source.messages || []).map((item) => ({ groupCode: item.groupCode || "GMPJ", ...item })),
     boardPosts: (source.boardPosts || defaultState.boardPosts).map((item) => ({ groupCode: item.groupCode || "GMPJ", ...item })),
   };
@@ -190,6 +204,28 @@ function latestAttendanceRecord(attendance, employeeId) {
     .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""))[0] || null;
 }
 
+function activeAttendanceRecords(attendance, employeeIds) {
+  const activeIds = new Set(employeeIds);
+  return employeeIds
+    .map((employeeId) => latestAttendanceRecord(attendance, employeeId))
+    .filter((record) => record && activeIds.has(record.employeeId) && record.clockIn && !record.clockOut);
+}
+
+function isScheduleDue(item) {
+  return Date.now() >= scheduleDateTime(item).getTime();
+}
+
+function isLeaveEditor(user) {
+  return Boolean(user?.role === "director" || user?.isCounter);
+}
+
+function scheduleCardState(item, response) {
+  if (response?.completedAt) return "completed";
+  if (isScheduleDue(item)) return "due";
+  if (response?.receivedAt) return "received";
+  return "default";
+}
+
 function confirmTwice(firstMessage, secondMessage) {
   return window.confirm(firstMessage) && window.confirm(secondMessage);
 }
@@ -239,9 +275,9 @@ function useAppState() {
 
   useEffect(() => {
     if (!cloudEnabled || !cloudReady) return;
-    const timer = window.setInterval(() => {
+    const syncFromCloud = () => {
       if (Date.now() - lastLocalWrite.current < 1200) return;
-      loadCloudState(readState())
+      return loadCloudState(readState())
         .then((cloudState) => {
           const normalized = normalizeState(cloudState);
           skipNextSave.current = true;
@@ -250,8 +286,28 @@ function useAppState() {
           setCloudStatus("雲端同步");
         })
         .catch(() => setCloudStatus("雲端同步失敗"));
+    };
+
+    const timer = window.setInterval(() => {
+      syncFromCloud();
     }, 1000);
-    return () => window.clearInterval(timer);
+
+    const handleFocus = () => syncFromCloud();
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") syncFromCloud();
+    };
+    const handleStorage = () => syncFromCloud();
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("storage", handleStorage);
+
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("storage", handleStorage);
+    };
   }, [cloudReady]);
 
   function setSyncedState(next) {
@@ -333,55 +389,10 @@ function App() {
   }, [state.directors, state.employees, session]);
 
   useEffect(() => {
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch(() => {});
-    }
-  }, []);
-
-  useEffect(() => {
     const timer = window.setInterval(() => setCurrentTime(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
 
-  useEffect(() => {
-    if (!session || !("Notification" in window) || Notification.permission !== "granted") return;
-    const timer = window.setInterval(() => {
-      const now = new Date();
-      const sent = new Set(JSON.parse(sessionStorage.getItem("sent-schedule-notices") || "[]"));
-
-      state.schedules.forEach((item) => {
-        const upcomingKey = `upcoming-${item.id}-${scheduleDate(item)}`;
-        const dueKey = `due-${item.id}-${scheduleDate(item)}`;
-        const diff = scheduleDateTime(item).getTime() - now.getTime();
-        if (!isVisibleTo(item, session)) return;
-        if (diff <= 10 * 60 * 1000 && diff > 0 && !sent.has(upcomingKey)) {
-          new Notification(`即將開始：${item.title}`, { body: `${item.time}｜${item.detail}` });
-          setNotice(`即將開始：${item.title}`);
-          sent.add(upcomingKey);
-        }
-        if (diff <= 0 && diff > -10 * 60 * 1000 && !sent.has(dueKey)) {
-          new Notification(`到點：${item.title}`, { body: item.detail });
-          setNotice(`到點：${item.title}`);
-          sent.add(dueKey);
-        }
-      });
-
-      sessionStorage.setItem("sent-schedule-notices", JSON.stringify([...sent]));
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [session, state.schedules]);
-
-  useEffect(() => {
-    if (!session || !("Notification" in window) || Notification.permission !== "granted") return;
-    const sent = new Set(JSON.parse(localStorage.getItem("sent-message-notices") || "[]"));
-    state.messages.forEach((message) => {
-      if (isMessageVisible(message, session) && !sent.has(message.id)) {
-        new Notification(`群發消息：${message.title}`, { body: message.text });
-        sent.add(message.id);
-      }
-    });
-    localStorage.setItem("sent-message-notices", JSON.stringify([...sent]));
-  }, [session, state.messages]);
 
   useEffect(() => {
     localStorage.setItem("dismissed-app-notices", JSON.stringify(dismissedNoticeIds));
@@ -634,7 +645,7 @@ function NoticeCenter({ notices, unreadCount, onClear }) {
 }
 
 function DirectorView({ state, setState, session, setSession, setNotice }) {
-  const [task, setTask] = useState({ title: "", detail: "", type: "fixed", date: todayDate(), time: "09:00", audience: "all", channel: "大屏幕 + 手機訊息 + Email" });
+  const [task, setTask] = useState({ title: "", detail: "", type: "fixed", date: todayDate(), time: "09:00", audience: "all", channel: "大屏幕 + Email + 手機文字" });
   const [directorTab, setDirectorTab] = useState("dashboard");
   const [groupCodeDraft, setGroupCodeDraft] = useState(session.user.groupCode || "");
   const isProxyManager = Boolean(session.user.isManager);
@@ -642,6 +653,10 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
   const attendanceRows = groupEmployees.map((employee) => ({ employee, ...statusForEmployee(state.attendance, employee.id) }));
   const groupEmployeeIds = new Set(groupEmployees.map((employee) => employee.id));
   const pendingApprovals = state.attendance.filter((record) => groupEmployeeIds.has(record.employeeId) && record.requestedClockOut && !record.clockOutApproved);
+  const activeStaff = activeAttendanceRecords(state.attendance, groupEmployees.map((employee) => employee.id));
+  const leaveEntries = state.leaveEntries.filter((entry) => entry.groupCode === session.user.groupCode);
+  const reportEntries = state.reportEntries.filter((entry) => entry.groupCode === session.user.groupCode);
+  const canManageSchedules = Boolean(session.role === "director" || session.user.isManager);
 
   function addSchedule(event) {
     event.preventDefault();
@@ -657,13 +672,6 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
         ...state.schedules,
       ],
     });
-    sendPushNotification({
-      groupCode: session.user.groupCode,
-      audience: task.audience,
-      title: `新排程：${newSchedule.title}`,
-      body: `${newSchedule.time}｜${newSchedule.detail}`,
-      tag: `schedule-${newSchedule.id}`,
-    }).catch(() => {});
     setTask({ ...task, title: "", detail: "" });
     setNotice(task.type === "fixed" ? "固定排程已建立。" : "臨時排程已建立。");
   }
@@ -703,6 +711,60 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
       ),
     });
     setNotice(nextValue ? "已賦予代理管理權。" : "已取消代理管理權。");
+  }
+
+  function toggleCounter(employeeId) {
+    const employee = groupEmployees.find((item) => item.id === employeeId);
+    const nextValue = !employee?.isCounter;
+    setState({
+      ...state,
+      employees: state.employees.map((item) =>
+        item.id === employeeId ? { ...item, isCounter: nextValue } : item
+      ),
+    });
+    setNotice(nextValue ? "已賦予櫃台老師權限。" : "已取消櫃台老師權限。");
+  }
+
+  function addLeaveEntry(entry) {
+    setState({
+      ...state,
+      leaveEntries: [
+        { id: crypto.randomUUID(), groupCode: session.user.groupCode, createdBy: session.user.id, createdByName: session.user.name, createdByRole: session.role, createdAt: new Date().toISOString(), ...entry },
+        ...state.leaveEntries,
+      ],
+    });
+  }
+
+  function deleteLeaveEntry(entryId) {
+    setState({
+      ...state,
+      leaveEntries: state.leaveEntries.filter((entry) => entry.id !== entryId),
+    });
+  }
+
+  function addReportEntry(entry) {
+    setState({
+      ...state,
+      reportEntries: [
+        {
+          id: crypto.randomUUID(),
+          groupCode: session.user.groupCode,
+          createdBy: session.user.id,
+          createdByName: session.user.name,
+          createdByRole: session.role,
+          createdAt: new Date().toISOString(),
+          ...entry,
+        },
+        ...state.reportEntries,
+      ],
+    });
+  }
+
+  function deleteReportEntry(entryId) {
+    setState({
+      ...state,
+      reportEntries: state.reportEntries.filter((entry) => entry.id !== entryId),
+    });
   }
 
   function updateEmployeeSchedule(employeeId, day, segmentIndex, field, value) {
@@ -809,6 +871,7 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
       employees: state.employees.map(replaceGroup),
       directors: state.directors.map(replaceGroup),
       schedules: state.schedules.map(replaceGroup),
+      reportEntries: state.reportEntries.map(replaceGroup),
       messages: state.messages.map(replaceGroup),
       boardPosts: state.boardPosts.map(replaceGroup),
     };
@@ -863,7 +926,12 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
       </div>
 
       {directorTab === "employees" && (
-        <EmployeeSchedulePanel employees={groupEmployees} onDelete={deleteEmployee} onToggleManager={toggleManager} />
+        <EmployeeSchedulePanel
+          employees={groupEmployees}
+          onDelete={deleteEmployee}
+          onToggleManager={toggleManager}
+          onToggleCounter={toggleCounter}
+        />
       )}
 
       {directorTab === "dashboard" && (
@@ -909,10 +977,10 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
           <label>
             通知方式
             <select value={task.channel} onChange={(event) => setTask({ ...task, channel: event.target.value })}>
-              <option>大屏幕 + 手機訊息 + Email</option>
+              <option>大屏幕 + Email + 手機文字</option>
               <option>大屏幕橫幅</option>
               <option>Email</option>
-              <option>手機訊息文字</option>
+              <option>手機文字複製</option>
             </select>
           </label>
           <button className="primary-action" type="submit"><Plus size={18} /> 新增排程</button>
@@ -934,6 +1002,24 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
           ))}
         </div>
       </div>
+
+      <ManpowerPanel employees={groupEmployees} activeStaff={activeStaff} totalStaff={groupEmployees.length} leaveEntries={leaveEntries} />
+
+      <LeavePanel
+        entries={leaveEntries}
+        canEdit={true}
+        onAddEntry={addLeaveEntry}
+        onDeleteEntry={deleteLeaveEntry}
+        editorLabel="主任"
+      />
+
+      <ReportPanel
+        entries={reportEntries}
+        canEdit={true}
+        onAddEntry={addReportEntry}
+        onDeleteEntry={deleteReportEntry}
+        editorLabel="主任"
+      />
 
       <BroadcastPanel state={state} setState={setState} session={session} setNotice={setNotice} />
 
@@ -1002,7 +1088,7 @@ const WEEK_DAYS = [
   ["0", "週日"],
 ];
 
-function EmployeeSchedulePanel({ employees, onDelete, onToggleManager }) {
+function EmployeeSchedulePanel({ employees, onDelete, onToggleManager, onToggleCounter }) {
   return (
     <div className="panel schedule-admin-panel">
       <SectionTitle icon={<Users size={20} />} title="員工資料" />
@@ -1022,11 +1108,19 @@ function EmployeeSchedulePanel({ employees, onDelete, onToggleManager }) {
               <span>群組：{employee.groupCode}</span>
               <span>Email：{employee.email || "未設定"}</span>
               <span>建立時間：{employee.createdAt ? new Date(employee.createdAt).toLocaleString("zh-TW") : "--"}</span>
-              <span>權限：{employee.isManager ? "代理管理者" : "一般員工"}</span>
+              <span>權限：{[
+                employee.isManager ? "代理主任" : null,
+                employee.isCounter ? "櫃台老師" : null,
+              ].filter(Boolean).join("、") || "一般員工"}</span>
             </div>
-            <button className={employee.isManager ? "secondary-action danger-action" : "secondary-action"} type="button" onClick={() => onToggleManager(employee.id)}>
-              <ShieldCheck size={16} /> {employee.isManager ? "取消代理管理權" : "賦予代理管理權"}
-            </button>
+            <div className="permission-actions">
+              <button className={employee.isManager ? "secondary-action danger-action" : "secondary-action"} type="button" onClick={() => onToggleManager(employee.id)}>
+                <ShieldCheck size={16} /> {employee.isManager ? "取消代理主任" : "賦予代理主任"}
+              </button>
+              <button className={employee.isCounter ? "secondary-action danger-action" : "secondary-action"} type="button" onClick={() => onToggleCounter(employee.id)}>
+                <Users size={16} /> {employee.isCounter ? "取消櫃台老師" : "賦予櫃台老師"}
+              </button>
+            </div>
           </article>
         ))}
       </div>
@@ -1052,14 +1146,6 @@ function BroadcastPanel({ state, setState, session, setNotice }) {
         ...state.messages,
       ],
     });
-    sendPushNotification({
-      groupCode: session.user.groupCode,
-      audience: message.audience,
-      title: `群發消息：${newMessage.title}`,
-      body: newMessage.text,
-      tag: `message-${newMessage.id}`,
-      requireInteraction: true,
-    }).catch(() => {});
     setMessage({ title: "", text: "", audience: "all" });
     setNotice("群發消息已送出。");
   }
@@ -1084,6 +1170,11 @@ function BroadcastPanel({ state, setState, session, setNotice }) {
 
 function EmployeeView({ state, setState, session, setSession, setNotice }) {
   const status = statusForEmployee(state.attendance, session.user.id);
+  const groupEmployees = state.employees.filter((employee) => employee.groupCode === session.user.groupCode);
+  const activeStaff = activeAttendanceRecords(state.attendance, groupEmployees.map((employee) => employee.id));
+  const leaveEntries = state.leaveEntries.filter((entry) => entry.groupCode === session.user.groupCode);
+  const canEditLeave = isLeaveEditor(session.user);
+  const canEditSchedules = isScheduleEditor(session.user);
 
   function clock(type) {
     const today = todayDate();
@@ -1152,6 +1243,23 @@ function EmployeeView({ state, setState, session, setSession, setNotice }) {
     setNotice("員工帳號已刪除。");
   }
 
+  function addLeaveEntry(entry) {
+    setState({
+      ...state,
+      leaveEntries: [
+        { id: crypto.randomUUID(), groupCode: session.user.groupCode, createdBy: session.user.id, createdByName: session.user.name, createdByRole: session.role, createdAt: new Date().toISOString(), ...entry },
+        ...state.leaveEntries,
+      ],
+    });
+  }
+
+  function deleteLeaveEntry(entryId) {
+    setState({
+      ...state,
+      leaveEntries: state.leaveEntries.filter((entry) => entry.id !== entryId),
+    });
+  }
+
   return (
     <section className="dashboard-grid employee-dashboard">
       <div className="panel attendance-card">
@@ -1169,17 +1277,38 @@ function EmployeeView({ state, setState, session, setSession, setNotice }) {
         </button>
       </div>
 
-      <ScheduleList state={state} setState={setState} viewer={session} setNotice={setNotice} />
+      <ManpowerPanel employees={groupEmployees} activeStaff={activeStaff} totalStaff={groupEmployees.length} leaveEntries={leaveEntries} />
+
+      {canManageSchedules && (
+        <ScheduleEditorPanel state={state} setState={setState} viewer={session} setNotice={setNotice} />
+      )}
+
+      <LeavePanel
+        entries={leaveEntries}
+        canEdit={canEditLeave}
+        onAddEntry={addLeaveEntry}
+        onDeleteEntry={deleteLeaveEntry}
+        editorLabel={session.user.name}
+      />
+
+      <ReportPanel
+        entries={reportEntries}
+        canEdit={true}
+        onAddEntry={addReportEntry}
+        onDeleteEntry={deleteReportEntry}
+        editorLabel={session.user.name}
+      />
+
+      <ScheduleList state={state} setState={setState} viewer={session} setNotice={setNotice} canManage={canManageSchedules} />
       <MessagePanel state={state} viewer={session} />
-      <NotificationPanel session={session} setNotice={setNotice} />
 
       <div className="panel">
-        <SectionTitle icon={<Mail size={20} />} title="我的通知設定" />
+        <SectionTitle icon={<Mail size={20} />} title="聯絡資料" />
         <label>
           電子郵件
           <input type="email" value={session.user.email || ""} onChange={(event) => updateEmployee("email", event.target.value)} placeholder="name@example.com" />
         </label>
-        <p className="muted">目前只保留上班與下班打卡。下班仍需主任核准。</p>
+        <p className="muted">這裡保留聯絡資料與帳號刪除。排程與請假內容會直接同步到雲端，不再發送額外推播通知。</p>
         <button className="secondary-action danger-action" type="button" onClick={deleteOwnEmployeeAccount}>
           <Trash2 size={16} /> 刪除我的員工帳號
         </button>
@@ -1188,7 +1317,7 @@ function EmployeeView({ state, setState, session, setSession, setNotice }) {
   );
 }
 
-function ScheduleList({ state, setState, viewer, setNotice, onDelete }) {
+function ScheduleList({ state, setState, viewer, setNotice, onDelete, canManage = false }) {
   const schedules = useMemo(() => {
     return state.schedules
       .filter((item) => isVisibleTo(item, viewer))
@@ -1232,7 +1361,7 @@ function ScheduleList({ state, setState, viewer, setNotice, onDelete }) {
 
   function shareText(item) {
     navigator.clipboard?.writeText(messageText(item));
-    setNotice("已複製手機訊息文字，可貼到 LINE、WhatsApp 或其他通訊 APP。");
+    setNotice("已複製手機文字，可貼到 LINE、WhatsApp 或其他通訊 APP。");
   }
 
   function emailNotice(item) {
@@ -1262,10 +1391,11 @@ function ScheduleList({ state, setState, viewer, setNotice, onDelete }) {
       <div className="task-list">
         {schedules.map((item) => {
           const employeeResponse = viewer.role === "employee" ? findResponse(item, viewer.user.id) : null;
-          const canComplete = Date.now() >= scheduleDateTime(item).getTime();
+          const canComplete = isScheduleDue(item);
           const summary = viewer.role === "director" ? responseSummary(item) : null;
+          const cardState = viewer.role === "employee" ? scheduleCardState(item, employeeResponse) : canComplete ? "due" : "default";
           return (
-            <article className="task-card" key={item.id}>
+            <article className={`task-card ${cardState === "due" ? "due-state" : ""} ${cardState === "received" ? "received-state" : ""} ${cardState === "completed" ? "completed-state" : ""}`} key={item.id}>
               <div className="task-main">
                 <span className="schedule-kind">{item.type === "fixed" ? "每日固定" : "臨時指定"}</span>
                 <h3>{item.title}</h3>
@@ -1294,10 +1424,10 @@ function ScheduleList({ state, setState, viewer, setNotice, onDelete }) {
                 <button className="icon-button" onClick={() => emailNotice(item)} title="建立 Email 草稿">
                   <Mail size={18} />
                 </button>
-                <button className="icon-button" onClick={() => shareText(item)} title="複製手機訊息">
+                <button className="icon-button" onClick={() => shareText(item)} title="複製手機文字">
                   <MessageCircle size={18} />
                 </button>
-                {viewer.role === "director" && (
+                {(viewer.role === "director" || canManage) && (
                   <button className="icon-button danger" onClick={() => onDelete(item.id)} title="刪除排程">
                     <Trash2 size={18} />
                   </button>
@@ -1375,21 +1505,212 @@ function BoardPanel({ state, setState, session, setNotice }) {
   );
 }
 
-function NotificationPanel({ session, setNotice }) {
-  async function requestPermission() {
-    try {
-      await subscribeToWebPush(session);
-      setNotice("手機推播已開啟。支援的瀏覽器可在背景收到通知。");
-    } catch (error) {
-      setNotice(error.message || "這個手機瀏覽器不支援推播。");
-    }
+function ManpowerPanel({ employees, activeStaff, totalStaff, leaveEntries }) {
+  const leaveCounts = LEAVE_GRADES.map((grade) => ({
+    grade,
+    count: leaveEntries.filter((entry) => entry.grade === grade).length,
+  }));
+
+  return (
+    <div className="panel manpower-panel">
+      <SectionTitle icon={<Users size={20} />} title="目前人力" />
+      <div className="manpower-head">
+        <strong>上班中 {activeStaff.length}/{totalStaff}</strong>
+        <span>學生請假 {leaveEntries.length}</span>
+      </div>
+      <div className="tag-row">
+        {activeStaff.length ? activeStaff.map((record) => (
+          <span className="info-tag" key={`${record.employeeId}-${record.id}`}>{employees.find((employee) => employee.id === record.employeeId)?.name || record.employeeId}</span>
+        )) : <span className="muted">目前沒有員工在班。</span>}
+      </div>
+      <div className="leave-grade-row">
+        {leaveCounts.map((item) => (
+          <span className="info-tag" key={item.grade}>{item.grade} {item.count}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LeavePanel({ entries, canEdit, onAddEntry, onDeleteEntry, editorLabel }) {
+  const [draft, setDraft] = useState({ grade: LEAVE_GRADES[0], note: "" });
+
+  function submit(event) {
+    event.preventDefault();
+    if (!draft.note.trim()) return;
+    onAddEntry({
+      grade: draft.grade,
+      note: draft.note.trim(),
+    });
+    setDraft({ grade: LEAVE_GRADES[0], note: "" });
   }
 
   return (
-    <div className="panel">
-      <SectionTitle icon={<Bell size={20} />} title="通知設定" />
-      <p className="muted">開啟後，支援 Web Push 的手機瀏覽器可在背景收到群發、排程即將開始與到點通知。若瀏覽器不支援，仍會顯示 APP 內通知中心。</p>
-      <button className="secondary-action" onClick={requestPermission}><Bell size={16} /> 開啟手機推播</button>
+    <div className="panel leave-panel">
+      <SectionTitle icon={<MessageCircle size={20} />} title="學生請假" />
+      {canEdit ? (
+        <form className="leave-form" onSubmit={submit}>
+          <label>
+            年級
+            <select value={draft.grade} onChange={(event) => setDraft({ ...draft, grade: event.target.value })}>
+              {LEAVE_GRADES.map((grade) => <option key={grade} value={grade}>{grade}</option>)}
+            </select>
+          </label>
+          <label className="wide">
+            特殊事由留言欄
+            <textarea value={draft.note} onChange={(event) => setDraft({ ...draft, note: event.target.value })} placeholder="例如：發燒、補習、家長接送..." />
+          </label>
+          <button className="primary-action" type="submit">由 {editorLabel} 新增請假</button>
+        </form>
+      ) : (
+        <p className="muted">此區由櫃台或主任維護，其他人員只能查看。</p>
+      )}
+      <div className="leave-list">
+        {entries.length ? entries.map((entry) => (
+          <article className="leave-item" key={entry.id}>
+            <div>
+              <strong>{entry.grade}</strong>
+              <p>{entry.note}</p>
+              <small>{entry.createdByName || "系統"}｜{new Date(entry.createdAt).toLocaleString("zh-TW")}</small>
+            </div>
+            {canEdit && (
+              <button className="icon-button danger" onClick={() => onDeleteEntry(entry.id)} title="刪除請假">
+                <Trash2 size={18} />
+              </button>
+            )}
+          </article>
+        )) : <p className="muted">目前沒有請假資料。</p>}
+      </div>
+    </div>
+  );
+}
+
+function ReportPanel({ entries, canEdit, onAddEntry, onDeleteEntry, editorLabel }) {
+  const [draft, setDraft] = useState({ targetGrade: "全體", note: "" });
+
+  function submit(event) {
+    event.preventDefault();
+    if (!draft.note.trim()) return;
+    onAddEntry({
+      targetGrade: draft.targetGrade,
+      note: draft.note.trim(),
+    });
+    setDraft({ targetGrade: "全體", note: "" });
+  }
+
+  return (
+    <div className="panel report-panel">
+      <SectionTitle icon={<MessageCircle size={20} />} title="未到班回報" />
+      <p className="muted">這裡的內容會讓同群組所有人都看得到，用來回報今天哪些同學還沒到班。</p>
+      {canEdit ? (
+        <form className="report-form" onSubmit={submit}>
+          <label>
+            送給
+            <select value={draft.targetGrade} onChange={(event) => setDraft({ ...draft, targetGrade: event.target.value })}>
+              <option value="全體">全體未到班同學</option>
+              {LEAVE_GRADES.map((grade) => <option key={grade} value={grade}>{grade}</option>)}
+            </select>
+          </label>
+          <label className="wide">
+            回報內容
+            <textarea value={draft.note} onChange={(event) => setDraft({ ...draft, note: event.target.value })} placeholder="例如：今天 08:30 前請到、未到班請回報原因。" />
+          </label>
+          <button className="primary-action" type="submit">由 {editorLabel} 發送回報</button>
+        </form>
+      ) : (
+        <p className="muted">目前僅可查看，不可編輯。</p>
+      )}
+      <div className="report-list">
+        {entries.length ? entries.map((entry) => (
+          <article className="report-item" key={entry.id}>
+            <div>
+              <strong>{entry.targetGrade === "全體" ? "全體未到班同學" : entry.targetGrade}</strong>
+              <p>{entry.note}</p>
+              <small>{entry.createdByName || "系統"}｜{new Date(entry.createdAt).toLocaleString("zh-TW")}</small>
+            </div>
+            {canEdit && (
+              <button className="icon-button danger" onClick={() => onDeleteEntry(entry.id)} title="刪除回報">
+                <Trash2 size={18} />
+              </button>
+            )}
+          </article>
+        )) : <p className="muted">目前沒有未到班回報。</p>}
+      </div>
+    </div>
+  );
+}
+
+function ScheduleEditorPanel({ state, setState, viewer, setNotice }) {
+  const [task, setTask] = useState({ title: "", detail: "", type: "fixed", date: todayDate(), time: "09:00", audience: "all", channel: "大屏幕 + Email + 手機文字" });
+  const groupEmployees = state.employees.filter((employee) => employee.groupCode === viewer.user.groupCode);
+
+  function addSchedule(event) {
+    event.preventDefault();
+    if (!task.title.trim() || !task.detail.trim()) {
+      setNotice("請填寫事項標題與內容。");
+      return;
+    }
+    const newSchedule = { ...task, groupCode: viewer.user.groupCode, id: crypto.randomUUID(), title: task.title.trim(), detail: task.detail.trim(), createdBy: viewer.user.username, createdAt: new Date().toISOString() };
+    setState({
+      ...state,
+      schedules: [newSchedule, ...state.schedules],
+    });
+    setTask({ ...task, title: "", detail: "" });
+    setNotice(task.type === "fixed" ? "固定排程已建立。" : "臨時排程已建立。");
+  }
+
+  return (
+    <div className="panel compose-panel">
+      <SectionTitle icon={<Megaphone size={20} />} title="排成事項編輯" />
+      <form onSubmit={addSchedule} className="form-grid">
+        <div className="segmented wide">
+          <button type="button" className={task.type === "fixed" ? "selected" : ""} onClick={() => setTask({ ...task, type: "fixed" })}>
+            <RotateCw size={16} /> 固定每日
+          </button>
+          <button type="button" className={task.type === "temporary" ? "selected" : ""} onClick={() => setTask({ ...task, type: "temporary" })}>
+            <CalendarClock size={16} /> 臨時指定
+          </button>
+        </div>
+        <label className="wide">
+          事項標題
+          <input value={task.title} onChange={(event) => setTask({ ...task, title: event.target.value })} placeholder="例如：每日早會、臨時盤點" />
+        </label>
+        <label className="wide">
+          內容
+          <textarea value={task.detail} onChange={(event) => setTask({ ...task, detail: event.target.value })} placeholder="寫下員工需要收到的重點。" />
+        </label>
+        {task.type === "temporary" && (
+          <label>
+            日期
+            <input type="date" value={task.date} onChange={(event) => setTask({ ...task, date: event.target.value })} />
+          </label>
+        )}
+        <label>
+          時間
+          <input type="time" value={task.time} onChange={(event) => setTask({ ...task, time: event.target.value })} />
+        </label>
+        <label>
+          對象
+          <select value={task.audience} onChange={(event) => setTask({ ...task, audience: event.target.value })}>
+            <option value="all">全體員工</option>
+            {groupEmployees.map((employee) => (
+              <option key={employee.id} value={employee.id}>{employee.name}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          顯示方式
+          <select value={task.channel} onChange={(event) => setTask({ ...task, channel: event.target.value })}>
+            <option>大屏幕 + Email + 手機文字</option>
+            <option>大屏幕橫幅</option>
+            <option>Email</option>
+            <option>手機文字複製</option>
+          </select>
+        </label>
+        <button className="primary-action" type="submit"><Plus size={18} /> 新增排程</button>
+      </form>
+
+      <ScheduleList state={state} setState={setState} viewer={viewer} setNotice={setNotice} canManage={true} />
     </div>
   );
 }

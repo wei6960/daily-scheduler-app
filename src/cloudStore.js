@@ -2,10 +2,8 @@ import { createClient } from "@supabase/supabase-js";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const vapidPublicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
 
 export const cloudEnabled = Boolean(supabaseUrl && supabaseAnonKey);
-export const pushEnabled = Boolean(cloudEnabled && vapidPublicKey);
 export const supabase = cloudEnabled ? createClient(supabaseUrl, supabaseAnonKey) : null;
 
 const COLLECTIONS = [
@@ -14,6 +12,8 @@ const COLLECTIONS = [
   "schedules",
   "attendance",
   "scheduleResponses",
+  "leaveEntries",
+  "reportEntries",
   "messages",
   "boardPosts",
 ];
@@ -81,47 +81,4 @@ export async function groupCodeExists(code) {
   const { data, error } = await supabase.from("app_groups").select("code").eq("code", code).maybeSingle();
   if (error) throw error;
   return Boolean(data);
-}
-
-export async function subscribeToWebPush(session) {
-  if (!pushEnabled || !session?.user) {
-    throw new Error("Web Push 尚未設定。");
-  }
-  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-    throw new Error("這個手機瀏覽器不支援 Web Push。");
-  }
-  const permission = await Notification.requestPermission();
-  if (permission !== "granted") {
-    throw new Error("通知權限尚未開啟。");
-  }
-  const registration = await navigator.serviceWorker.ready;
-  const subscription = await registration.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
-  });
-  const { error } = await supabase.from("push_subscriptions").upsert({
-    endpoint: subscription.endpoint,
-    user_id: session.user.id,
-    role: session.role,
-    group_code: session.user.groupCode,
-    subscription: subscription.toJSON(),
-    updated_at: new Date().toISOString(),
-  });
-  if (error) throw error;
-  return subscription;
-}
-
-export async function sendPushNotification({ groupCode, audience = "all", title, body, tag, requireInteraction = false }) {
-  if (!cloudEnabled) return;
-  const { error } = await supabase.functions.invoke("send-push", {
-    body: { groupCode, audience, title, body, tag, requireInteraction },
-  });
-  if (error) throw error;
-}
-
-function urlBase64ToUint8Array(base64String) {
-  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const rawData = window.atob(base64);
-  return Uint8Array.from([...rawData].map((char) => char.charCodeAt(0)));
 }
