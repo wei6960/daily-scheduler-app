@@ -518,6 +518,40 @@ textarea:focus {
   gap: 10px;
 }
 
+.director-home-panel {
+  grid-column: 1 / -1;
+}
+
+.code-card {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fffaf1;
+}
+
+.code-card span,
+.code-card small {
+  color: var(--muted);
+}
+
+.code-card strong {
+  font-size: clamp(1.8rem, 4vw, 3rem);
+  letter-spacing: 0;
+  color: var(--terracotta);
+}
+
+.tab-switch {
+  margin-bottom: 0;
+}
+
+.danger-action {
+  color: #fffdf8;
+  background: var(--terracotta);
+}
+
 .compact-stack textarea,
 .board-form textarea {
   min-height: 86px;
@@ -627,7 +661,7 @@ textarea:focus {
 
 .shift-row {
   display: grid;
-  grid-template-columns: 1fr 1fr 32px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 40px;
   gap: 6px;
   align-items: center;
 }
@@ -638,6 +672,8 @@ textarea:focus {
 }
 
 .tiny-icon {
+  position: relative;
+  z-index: 2;
   width: 32px;
   height: 32px;
   min-height: 32px;

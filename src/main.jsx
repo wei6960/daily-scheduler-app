@@ -459,6 +459,7 @@ function Billboard({ state, viewer }) {
 function DirectorView({ state, setState, session, setSession, setNotice }) {
   const [task, setTask] = useState({ title: "", detail: "", type: "fixed", date: todayDate(), time: "09:00", audience: "all", channel: "大屏幕 + 手機訊息 + Email" });
   const [directorForm, setDirectorForm] = useState({ name: "", username: "", password: "", email: "" });
+  const [directorTab, setDirectorTab] = useState("dashboard");
   const groupEmployees = state.employees.filter((employee) => employee.groupCode === session.user.groupCode);
   const attendanceRows = groupEmployees.map((employee) => ({ employee, ...statusForEmployee(state.attendance, employee.id) }));
   const groupEmployeeIds = new Set(groupEmployees.map((employee) => employee.id));
@@ -491,6 +492,8 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
   }
 
   function deleteEmployee(employeeId) {
+    const employee = groupEmployees.find((item) => item.id === employeeId);
+    if (!window.confirm(`確定要刪除 ${employee?.name || "這位員工"} 的資料嗎？此動作會一併刪除考勤與排程回覆。`)) return;
     setState({
       ...state,
       employees: state.employees.filter((employee) => employee.id !== employeeId),
@@ -578,8 +581,39 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
     setSession({ ...session, user: updatedUser });
   }
 
+  function deleteCurrentDirector() {
+    const groupDirectors = state.directors.filter((director) => director.groupCode === session.user.groupCode);
+    if (groupDirectors.length <= 1 && groupEmployees.length > 0) {
+      setNotice("此群組還有員工，至少需要保留一個主任帳號。");
+      return;
+    }
+    setState({ ...state, directors: state.directors.filter((director) => director.id !== session.user.id) });
+    setSession(null);
+    setNotice("主任帳號已刪除並登出。");
+  }
+
   return (
     <section className="dashboard-grid">
+      <div className="panel director-home-panel">
+        <SectionTitle icon={<ShieldCheck size={20} />} title="主任管理" />
+        <div className="code-card">
+          <span>群組代碼</span>
+          <strong>{session.user.groupCode}</strong>
+          <small>請把這組代碼提供給員工註冊加入。</small>
+        </div>
+        <div className="segmented slim tab-switch">
+          <button type="button" className={directorTab === "dashboard" ? "selected" : ""} onClick={() => setDirectorTab("dashboard")}>主任首頁</button>
+          <button type="button" className={directorTab === "employees" ? "selected" : ""} onClick={() => setDirectorTab("employees")}>員工資料</button>
+          <button type="button" className={directorTab === "account" ? "selected" : ""} onClick={() => setDirectorTab("account")}>帳號設定</button>
+        </div>
+      </div>
+
+      {directorTab === "employees" && (
+        <EmployeeSchedulePanel employees={groupEmployees} onDelete={deleteEmployee} onAddSegment={addShiftSegment} onRemoveSegment={removeShiftSegment} onUpdateSegment={updateEmployeeSchedule} />
+      )}
+
+      {directorTab === "dashboard" && (
+        <>
       <div className="panel compose-panel">
         <SectionTitle icon={<Megaphone size={20} />} title="主任排程" />
         <form onSubmit={addSchedule} className="form-grid">
@@ -647,8 +681,6 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
         </div>
       </div>
 
-      <EmployeeSchedulePanel employees={groupEmployees} onDelete={deleteEmployee} onAddSegment={addShiftSegment} onRemoveSegment={removeShiftSegment} onUpdateSegment={updateEmployeeSchedule} />
-
       <BroadcastPanel state={state} setState={setState} session={session} setNotice={setNotice} />
 
       <div className="panel">
@@ -679,7 +711,11 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
       <ScheduleList state={state} setState={setState} viewer={{ role: "director" }} setNotice={setNotice} onDelete={deleteSchedule} />
 
       <MessagePanel state={state} viewer={{ role: "director", user: session.user }} />
+        </>
+      )}
 
+      {directorTab === "account" && (
+        <>
       <div className="panel">
         <SectionTitle icon={<Mail size={20} />} title="主任 Email" />
         <label>
@@ -699,6 +735,16 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
           <button className="secondary-action" type="submit"><UserPlus size={16} /> 建立</button>
         </form>
       </div>
+
+      <div className="panel">
+        <SectionTitle icon={<Trash2 size={20} />} title="刪除主任帳號" />
+        <p className="muted">刪除後會立即登出。若此群組還有員工，系統會要求至少保留一個主任帳號。</p>
+        <button className="secondary-action danger-action" type="button" onClick={deleteCurrentDirector}>
+          <Trash2 size={16} /> 刪除我的主任帳號
+        </button>
+      </div>
+        </>
+      )}
     </section>
   );
 }
