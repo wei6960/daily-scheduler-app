@@ -1164,7 +1164,7 @@ function BroadcastPanel({ state, setState, session, setNotice }) {
   function sendMessage(event) {
     event.preventDefault();
     if (!message.title.trim() || !message.text.trim()) {
-      setNotice("請填寫群發消息標題與內容。");
+      setNotice("請填寫注意事項標題與內容。");
       return;
     }
     const newMessage = { ...message, groupCode: session.user.groupCode, id: crypto.randomUUID(), title: message.title.trim(), text: message.text.trim(), createdAt: new Date().toISOString() };
@@ -1176,15 +1176,15 @@ function BroadcastPanel({ state, setState, session, setNotice }) {
       ],
     });
     setMessage({ title: "", text: "", audience: "all" });
-    setNotice("群發消息已送出。");
+    setNotice("注意事項已送出。");
   }
 
   return (
     <div className="panel">
-      <SectionTitle icon={<Send size={20} />} title="群發消息" />
+      <SectionTitle icon={<Send size={20} />} title="注意事項發送" />
       <form onSubmit={sendMessage} className="compact-stack">
-        <input value={message.title} onChange={(event) => setMessage({ ...message, title: event.target.value })} placeholder="消息標題" />
-        <textarea value={message.text} onChange={(event) => setMessage({ ...message, text: event.target.value })} placeholder="要群發給員工的內容" />
+        <input value={message.title} onChange={(event) => setMessage({ ...message, title: event.target.value })} placeholder="注意事項標題" />
+        <textarea value={message.text} onChange={(event) => setMessage({ ...message, text: event.target.value })} placeholder="要發送給員工的注意事項內容" />
         <select value={message.audience} onChange={(event) => setMessage({ ...message, audience: event.target.value })}>
           <option value="all">全體員工</option>
           {groupEmployees.map((employee) => (
@@ -1519,7 +1519,7 @@ function MessagePanel({ state, viewer }) {
   const messages = state.messages.filter((message) => isMessageVisible(message, viewer)).slice(0, 6);
   return (
     <div className="panel">
-      <SectionTitle icon={<Megaphone size={20} />} title="群發消息" />
+      <SectionTitle icon={<Megaphone size={20} />} title="注意事項" />
       {messages.length ? (
         <div className="message-list">
           {messages.map((message) => (
@@ -1531,7 +1531,7 @@ function MessagePanel({ state, viewer }) {
           ))}
         </div>
       ) : (
-        <p className="muted">目前沒有群發消息。</p>
+        <p className="muted">目前沒有注意事項。</p>
       )}
     </div>
   );
