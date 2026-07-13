@@ -25,7 +25,7 @@ import {
   X,
 } from "lucide-react";
 import "./styles.css";
-import { cloudEnabled, groupCodeExists, loadCloudState, saveCloudState } from "./cloudStore";
+import { cloudEnabled, groupCodeExists, loadCloudState, saveCloudState, sendPushNotification, subscribeToWebPush } from "./cloudStore";
 
 const STORAGE_KEY = "daily-scheduler-attendance-v3";
 const LEGACY_KEYS = ["daily-scheduler-attendance-v2", "daily-scheduler-attendance-v1"];
@@ -636,13 +636,21 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
       setNotice("請填寫事項標題與內容。");
       return;
     }
+    const newSchedule = { ...task, groupCode: session.user.groupCode, id: crypto.randomUUID(), title: task.title.trim(), detail: task.detail.trim(), createdBy: session.user.username, createdAt: new Date().toISOString() };
     setState({
       ...state,
       schedules: [
-        { ...task, groupCode: session.user.groupCode, id: crypto.randomUUID(), title: task.title.trim(), detail: task.detail.trim(), createdBy: session.user.username, createdAt: new Date().toISOString() },
+        newSchedule,
         ...state.schedules,
       ],
     });
+    sendPushNotification({
+      groupCode: session.user.groupCode,
+      audience: task.audience,
+      title: `新排程：${newSchedule.title}`,
+      body: `${newSchedule.time}｜${newSchedule.detail}`,
+      tag: `schedule-${newSchedule.id}`,
+    }).catch(() => {});
     setTask({ ...task, title: "", detail: "" });
     setNotice(task.type === "fixed" ? "固定排程已建立。" : "臨時排程已建立。");
   }
@@ -1000,13 +1008,22 @@ function BroadcastPanel({ state, setState, session, setNotice }) {
       setNotice("請填寫群發消息標題與內容。");
       return;
     }
+    const newMessage = { ...message, groupCode: session.user.groupCode, id: crypto.randomUUID(), title: message.title.trim(), text: message.text.trim(), createdAt: new Date().toISOString() };
     setState({
       ...state,
       messages: [
-        { ...message, groupCode: session.user.groupCode, id: crypto.randomUUID(), title: message.title.trim(), text: message.text.trim(), createdAt: new Date().toISOString() },
+        newMessage,
         ...state.messages,
       ],
     });
+    sendPushNotification({
+      groupCode: session.user.groupCode,
+      audience: message.audience,
+      title: `群發消息：${newMessage.title}`,
+      body: newMessage.text,
+      tag: `message-${newMessage.id}`,
+      requireInteraction: true,
+    }).catch(() => {});
     setMessage({ title: "", text: "", audience: "all" });
     setNotice("群發消息已送出。");
   }
@@ -1115,7 +1132,7 @@ function EmployeeView({ state, setState, session, setSession, setNotice }) {
 
       <ScheduleList state={state} setState={setState} viewer={session} setNotice={setNotice} />
       <MessagePanel state={state} viewer={session} />
-      <NotificationPanel setNotice={setNotice} />
+      <NotificationPanel session={session} setNotice={setNotice} />
 
       <div className="panel">
         <SectionTitle icon={<Mail size={20} />} title="我的通知設定" />
@@ -1319,21 +1336,21 @@ function BoardPanel({ state, setState, session, setNotice }) {
   );
 }
 
-function NotificationPanel({ setNotice }) {
+function NotificationPanel({ session, setNotice }) {
   async function requestPermission() {
-    if (!("Notification" in window)) {
-      setNotice("這個瀏覽器不支援系統通知。");
-      return;
+    try {
+      await subscribeToWebPush(session);
+      setNotice("手機推播已開啟。支援的瀏覽器可在背景收到通知。");
+    } catch (error) {
+      setNotice(error.message || "這個手機瀏覽器不支援推播。");
     }
-    const permission = await Notification.requestPermission();
-    setNotice(permission === "granted" ? "通知已開啟。排程提醒與群發消息會跳通知。" : "通知尚未開啟。");
   }
 
   return (
     <div className="panel">
       <SectionTitle icon={<Bell size={20} />} title="通知設定" />
-      <p className="muted">開啟後，排程提醒與群發消息會跳瀏覽器通知。自動寄 Email 需要再接 Resend、SendGrid 或 Supabase Edge Function；目前仍提供 Email 草稿。</p>
-      <button className="secondary-action" onClick={requestPermission}><Bell size={16} /> 開啟通知</button>
+      <p className="muted">開啟後，支援 Web Push 的手機瀏覽器可在背景收到群發、排程即將開始與到點通知。若瀏覽器不支援，仍會顯示 APP 內通知中心。</p>
+      <button className="secondary-action" onClick={requestPermission}><Bell size={16} /> 開啟手機推播</button>
     </div>
   );
 }

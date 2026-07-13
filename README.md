@@ -77,3 +77,45 @@ GitHub Pages 也支援自動部署：到 GitHub repo 的 `Settings` → `Secrets
 - 一組後端專用 API key
 
 目前 APP 會保留 Email 草稿功能；自動寄信需要加後端寄信函式。
+
+## Web Push 背景通知
+
+此專案已加入 Supabase Edge Function + Web Push 架構。
+
+需要先更新 Supabase SQL：
+
+```sql
+-- 在 Supabase SQL Editor 重新執行 supabase/schema.sql
+```
+
+需要部署 Edge Functions：
+
+```bash
+npx supabase login
+npx supabase link --project-ref ztsdlnrcjfqzqoypeuju
+npx supabase secrets set VAPID_PUBLIC_KEY=你的_VAPID_PUBLIC_KEY
+npx supabase secrets set VAPID_PRIVATE_KEY=你的_VAPID_PRIVATE_KEY
+npx supabase secrets set VAPID_SUBJECT=mailto:你的信箱
+npx supabase functions deploy send-push
+npx supabase functions deploy send-due-pushes
+```
+
+前端需要 GitHub Secret：
+
+```bash
+VITE_VAPID_PUBLIC_KEY=你的_VAPID_PUBLIC_KEY
+```
+
+`send-push` 會在主任建立排程或群發消息時立即推送。
+
+`send-due-pushes` 需要定時呼叫，建議每分鐘一次。可用 Supabase Scheduled Functions、cron-job.org，或其他排程服務呼叫：
+
+```text
+https://ztsdlnrcjfqzqoypeuju.supabase.co/functions/v1/send-due-pushes
+```
+
+手機限制：
+
+- Android Chrome / Edge 通常支援 Web Push。
+- iPhone 需要使用 Safari 將網站加入主畫面後，才比較可能收到 Web Push。
+- 若使用的手機瀏覽器不支援 Web Push，APP 內通知中心仍會顯示提醒。
