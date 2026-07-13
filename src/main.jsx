@@ -645,7 +645,7 @@ function NoticeCenter({ notices, unreadCount, onClear }) {
 }
 
 function DirectorView({ state, setState, session, setSession, setNotice }) {
-  const [task, setTask] = useState({ title: "", detail: "", type: "fixed", date: todayDate(), time: "09:00", audience: "all", channel: "大屏幕 + Email + 手機文字" });
+  const [task, setTask] = useState({ title: "", detail: "", type: "fixed", date: todayDate(), time: "09:00", audience: "all" });
   const [directorTab, setDirectorTab] = useState("dashboard");
   const [groupCodeDraft, setGroupCodeDraft] = useState(session.user.groupCode || "");
   const isProxyManager = Boolean(session.user.isManager);
@@ -972,15 +972,6 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
               {groupEmployees.map((employee) => (
                 <option key={employee.id} value={employee.id}>{employee.name}</option>
               ))}
-            </select>
-          </label>
-          <label>
-            通知方式
-            <select value={task.channel} onChange={(event) => setTask({ ...task, channel: event.target.value })}>
-              <option>大屏幕 + Email + 手機文字</option>
-              <option>大屏幕橫幅</option>
-              <option>Email</option>
-              <option>手機文字複製</option>
             </select>
           </label>
           <button className="primary-action" type="submit"><Plus size={18} /> 新增排程</button>
@@ -1400,7 +1391,7 @@ function ScheduleList({ state, setState, viewer, setNotice, onDelete, canManage 
                 <span className="schedule-kind">{item.type === "fixed" ? "每日固定" : "臨時指定"}</span>
                 <h3>{item.title}</h3>
                 <p>{item.detail}</p>
-                <small>{item.type === "fixed" ? "每日" : item.date} {item.time}｜{item.channel}</small>
+                <small>{item.type === "fixed" ? "每日" : item.date} {item.time}</small>
                 {viewer.role === "director" && (
                   <div className="response-report">
                     <strong>收到 {summary.received}/{summary.targetEmployees.length}｜完成 {summary.completed}/{summary.targetEmployees.length}</strong>
@@ -1641,7 +1632,7 @@ function ReportPanel({ entries, canEdit, onAddEntry, onDeleteEntry, editorLabel 
 }
 
 function ScheduleEditorPanel({ state, setState, viewer, setNotice }) {
-  const [task, setTask] = useState({ title: "", detail: "", type: "fixed", date: todayDate(), time: "09:00", audience: "all", channel: "大屏幕 + Email + 手機文字" });
+  const [task, setTask] = useState({ title: "", detail: "", type: "fixed", date: todayDate(), time: "09:00", audience: "all" });
   const groupEmployees = state.employees.filter((employee) => employee.groupCode === viewer.user.groupCode);
 
   function addSchedule(event) {
@@ -1696,15 +1687,6 @@ function ScheduleEditorPanel({ state, setState, viewer, setNotice }) {
             {groupEmployees.map((employee) => (
               <option key={employee.id} value={employee.id}>{employee.name}</option>
             ))}
-          </select>
-        </label>
-        <label>
-          顯示方式
-          <select value={task.channel} onChange={(event) => setTask({ ...task, channel: event.target.value })}>
-            <option>大屏幕 + Email + 手機文字</option>
-            <option>大屏幕橫幅</option>
-            <option>Email</option>
-            <option>手機文字複製</option>
           </select>
         </label>
         <button className="primary-action" type="submit"><Plus size={18} /> 新增排程</button>
