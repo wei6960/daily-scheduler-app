@@ -143,7 +143,8 @@ function normalizeState(input) {
     attendance,
     scheduleResponses: source.scheduleResponses || [],
     leaveEntries: (source.leaveEntries || []).map((item) => ({
-      leaveDate: item.leaveDate || item.date || todayDate(),
+      leaveStartDate: item.leaveStartDate || item.leaveDate || item.date || todayDate(),
+      leaveEndDate: item.leaveEndDate || item.leaveDate || item.date || todayDate(),
       className: item.className || item.grade || "",
       studentName: item.studentName || item.name || "",
       note: item.note || "",
@@ -745,6 +746,8 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
           createdByRole: session.role,
           createdAt: new Date().toISOString(),
           ...entry,
+          leaveStartDate: entry.leaveStartDate || entry.leaveDate || todayDate(),
+          leaveEndDate: entry.leaveEndDate || entry.leaveDate || todayDate(),
         },
         ...state.leaveEntries,
       ],
@@ -1637,18 +1640,19 @@ function ManpowerPanel({ employees, activeStaff, totalStaff, leaveEntries }) {
 }
 
 function LeavePanel({ entries, canEdit, onAddEntry, onUpdateEntry, onDeleteEntry, editorLabel, viewer }) {
-  const [draft, setDraft] = useState({ leaveDate: todayDate(), className: "", studentName: "", note: "" });
+  const [draft, setDraft] = useState({ leaveStartDate: todayDate(), leaveEndDate: todayDate(), className: "", studentName: "", note: "" });
 
   function submit(event) {
     event.preventDefault();
-    if (!draft.leaveDate || !draft.className.trim() || !draft.studentName.trim()) return;
+    if (!draft.leaveStartDate || !draft.leaveEndDate || !draft.className.trim() || !draft.studentName.trim()) return;
     onAddEntry({
-      leaveDate: draft.leaveDate,
+      leaveStartDate: draft.leaveStartDate,
+      leaveEndDate: draft.leaveEndDate,
       className: draft.className.trim(),
       studentName: draft.studentName.trim(),
       note: draft.note.trim(),
     });
-    setDraft({ leaveDate: todayDate(), className: "", studentName: "", note: "" });
+    setDraft({ leaveStartDate: todayDate(), leaveEndDate: todayDate(), className: "", studentName: "", note: "" });
   }
 
   return (
@@ -1657,8 +1661,12 @@ function LeavePanel({ entries, canEdit, onAddEntry, onUpdateEntry, onDeleteEntry
       {canEdit ? (
         <form className="leave-form" onSubmit={submit}>
           <label>
-            請假日期
-            <input type="date" value={draft.leaveDate} onChange={(event) => setDraft({ ...draft, leaveDate: event.target.value })} />
+            請假開始日期
+            <input type="date" value={draft.leaveStartDate} onChange={(event) => setDraft({ ...draft, leaveStartDate: event.target.value })} />
+          </label>
+          <label>
+            請假結束日期
+            <input type="date" value={draft.leaveEndDate} onChange={(event) => setDraft({ ...draft, leaveEndDate: event.target.value })} />
           </label>
           <label>
             班級
@@ -1679,30 +1687,33 @@ function LeavePanel({ entries, canEdit, onAddEntry, onUpdateEntry, onDeleteEntry
       )}
       <div className="leave-list">
         {entries.length ? entries.map((entry) => (
-          <article className="leave-item" key={entry.id}>
+            <article className="leave-item" key={entry.id}>
             <div>
               <strong>{entry.studentName || "未命名"}｜{entry.className || "未填班級"}</strong>
-              <p>{entry.leaveDate || "未填日期"}｜{entry.note || "無事由"}</p>
+              <p>{entry.leaveStartDate || "未填日期"} 到 {entry.leaveEndDate || "未填日期"}｜{entry.note || "無事由"}</p>
               <small>{entry.createdByName || "系統"}｜{new Date(entry.createdAt).toLocaleString("zh-TW")}</small>
             </div>
             <div className="inline-actions">
-              {(viewer.role === "director" || entry.createdBy === viewer.user.id) && (
+              {canEdit && (
                 <>
                   <button className="secondary-action small-action" type="button" onClick={() => {
-                    const nextLeaveDate = window.prompt("請假日期", entry.leaveDate || todayDate());
-                    if (nextLeaveDate === null) return;
+                    const nextLeaveStartDate = window.prompt("請假開始日期", entry.leaveStartDate || todayDate());
+                    if (nextLeaveStartDate === null) return;
+                    const nextLeaveEndDate = window.prompt("請假結束日期", entry.leaveEndDate || entry.leaveStartDate || todayDate());
+                    if (nextLeaveEndDate === null) return;
                     const nextClassName = window.prompt("班級", entry.className || "");
                     if (nextClassName === null) return;
                     const nextStudentName = window.prompt("姓名", entry.studentName || "");
                     if (nextStudentName === null) return;
                     const nextNote = window.prompt("事由", entry.note || "");
                     if (nextNote === null) return;
-                    if (!nextLeaveDate.trim() || !nextClassName.trim() || !nextStudentName.trim()) {
-                      setNotice("請假日期、班級、姓名都不能空白。");
+                    if (!nextLeaveStartDate.trim() || !nextLeaveEndDate.trim() || !nextClassName.trim() || !nextStudentName.trim()) {
+                      setNotice("請假開始日期、請假結束日期、班級、姓名都不能空白。");
                       return;
                     }
                     onUpdateEntry(entry.id, {
-                      leaveDate: nextLeaveDate.trim(),
+                      leaveStartDate: nextLeaveStartDate.trim(),
+                      leaveEndDate: nextLeaveEndDate.trim(),
                       className: nextClassName.trim(),
                       studentName: nextStudentName.trim(),
                       note: nextNote.trim(),
@@ -1714,6 +1725,7 @@ function LeavePanel({ entries, canEdit, onAddEntry, onUpdateEntry, onDeleteEntry
                   <button className="secondary-action danger-action small-action" type="button" onClick={() => {
                     if (!window.confirm("確定要刪除這筆請假嗎？")) return;
                     onDeleteEntry(entry.id);
+                    setNotice("請假已刪除。");
                   }}>
                     刪除
                   </button>
