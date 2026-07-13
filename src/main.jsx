@@ -101,6 +101,7 @@ function normalizeState(input) {
     workStartTime: "09:00",
     groupCode: "GMPJ",
     weeklySchedule: defaultWeeklySchedule(),
+    isManager: false,
     ...employee,
   }));
   const directors = (Array.isArray(source.directors) ? source.directors : defaultState.directors).map((director) => ({
@@ -176,11 +177,21 @@ function todayShiftStart(user) {
 }
 
 function statusForEmployee(attendance, employeeId) {
-  const record = attendance.find((item) => item.employeeId === employeeId && item.date === todayDate());
+  const record = latestAttendanceRecord(attendance, employeeId);
   if (!record) return { label: "尚未上班", tone: "quiet", record: null };
   if (record.requestedClockOut && !record.clockOutApproved) return { label: "下班待核准", tone: "pending", record };
   if (record.clockIn && !record.clockOut) return { label: "上班中", tone: "active", record };
   return { label: "已下班", tone: "done", record };
+}
+
+function latestAttendanceRecord(attendance, employeeId) {
+  return attendance
+    .filter((item) => item.employeeId === employeeId && item.date === todayDate())
+    .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""))[0] || null;
+}
+
+function confirmTwice(firstMessage, secondMessage) {
+  return window.confirm(firstMessage) && window.confirm(secondMessage);
 }
 
 function useAppState() {
@@ -309,7 +320,7 @@ function App() {
 
   useEffect(() => {
     if (!session) return;
-    const users = session.role === "director" ? state.directors : state.employees;
+    const users = session.role === "director" ? [...state.directors, ...state.employees.filter((employee) => employee.isManager)] : state.employees;
     const freshUser = users.find((user) => user.id === session.user.id);
     if (!freshUser) {
       setSession(null);
@@ -483,11 +494,13 @@ function AuthPanel({ state, setState, setSession, setNotice }) {
 
     if (role === "director") {
       const director = state.directors.find((user) => user.username === username && user.password === password);
-      if (!director) {
+      const proxyDirector = state.employees.find((user) => user.isManager && user.username === username && user.password === password);
+      const directorUser = director || proxyDirector;
+      if (!directorUser) {
         setNotice("主任帳號或密碼不正確。預設主任帳號 GMPJ，密碼 6090。");
         return;
       }
-      setSession({ role: "director", user: director });
+      setSession({ role: "director", user: directorUser });
       setNotice("主任已登入。");
       return;
     }
@@ -622,9 +635,9 @@ function NoticeCenter({ notices, unreadCount, onClear }) {
 
 function DirectorView({ state, setState, session, setSession, setNotice }) {
   const [task, setTask] = useState({ title: "", detail: "", type: "fixed", date: todayDate(), time: "09:00", audience: "all", channel: "大屏幕 + 手機訊息 + Email" });
-  const [directorForm, setDirectorForm] = useState({ name: "", username: "", password: "", email: "" });
   const [directorTab, setDirectorTab] = useState("dashboard");
   const [groupCodeDraft, setGroupCodeDraft] = useState(session.user.groupCode || "");
+  const isProxyManager = Boolean(session.user.isManager);
   const groupEmployees = state.employees.filter((employee) => employee.groupCode === session.user.groupCode);
   const attendanceRows = groupEmployees.map((employee) => ({ employee, ...statusForEmployee(state.attendance, employee.id) }));
   const groupEmployeeIds = new Set(groupEmployees.map((employee) => employee.id));
@@ -666,7 +679,10 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
 
   function deleteEmployee(employeeId) {
     const employee = groupEmployees.find((item) => item.id === employeeId);
-    if (!window.confirm(`確定要刪除 ${employee?.name || "這位員工"} 的資料嗎？此動作會一併刪除考勤與排程回覆。`)) return;
+    if (!confirmTwice(
+      `確定要刪除 ${employee?.name || "這位員工"} 的資料嗎？`,
+      "請再次確認：刪除後會一併移除考勤、排程回覆，而且無法復原。"
+    )) return;
     setState({
       ...state,
       employees: state.employees.filter((employee) => employee.id !== employeeId),
@@ -674,6 +690,19 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
       scheduleResponses: state.scheduleResponses.filter((response) => response.employeeId !== employeeId),
     });
     setNotice("員工資料已刪除。");
+  }
+
+  function toggleManager(employeeId) {
+    const employee = groupEmployees.find((item) => item.id === employeeId);
+    const nextValue = !employee?.isManager;
+    if (nextValue && !window.confirm(`要讓 ${employee?.name || "這位員工"} 可以登入主任端並管理排程、核准下班嗎？`)) return;
+    setState({
+      ...state,
+      employees: state.employees.map((employee) =>
+        employee.id === employeeId ? { ...employee, isManager: nextValue } : employee
+      ),
+    });
+    setNotice(nextValue ? "已賦予代理管理權。" : "已取消代理管理權。");
   }
 
   function updateEmployeeSchedule(employeeId, day, segmentIndex, field, value) {
@@ -749,8 +778,9 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
 
   function updateDirectorEmail(email) {
     const directors = state.directors.map((director) => (director.id === session.user.id ? { ...director, email } : director));
-    const updatedUser = directors.find((director) => director.id === session.user.id);
-    setState({ ...state, directors });
+    const employees = state.employees.map((employee) => (employee.id === session.user.id ? { ...employee, email } : employee));
+    const updatedUser = directors.find((director) => director.id === session.user.id) || employees.find((employee) => employee.id === session.user.id);
+    setState({ ...state, directors, employees });
     setSession({ ...session, user: updatedUser });
   }
 
@@ -782,18 +812,31 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
       messages: state.messages.map(replaceGroup),
       boardPosts: state.boardPosts.map(replaceGroup),
     };
-    const updatedUser = nextState.directors.find((director) => director.id === session.user.id);
+    const updatedUser = nextState.directors.find((director) => director.id === session.user.id) || nextState.employees.find((employee) => employee.id === session.user.id);
     setState(nextState);
     setSession({ ...session, user: updatedUser });
     setNotice(`群組代碼已改為 ${nextCode}。`);
   }
 
   function deleteCurrentDirector() {
+    if (isProxyManager) {
+      if (!confirmTwice("確定要刪除自己的員工帳號嗎？", "請再次確認：刪除後會立即登出，考勤與排程回覆也會一併移除。")) return;
+      setState({
+        ...state,
+        employees: state.employees.filter((employee) => employee.id !== session.user.id),
+        attendance: state.attendance.filter((record) => record.employeeId !== session.user.id),
+        scheduleResponses: state.scheduleResponses.filter((response) => response.employeeId !== session.user.id),
+      });
+      setSession(null);
+      setNotice("代理管理者帳號已刪除並登出。");
+      return;
+    }
     const groupDirectors = state.directors.filter((director) => director.groupCode === session.user.groupCode);
     if (groupDirectors.length <= 1 && groupEmployees.length > 0) {
       setNotice("此群組還有員工，至少需要保留一個主任帳號。");
       return;
     }
+    if (!confirmTwice("確定要刪除自己的主任帳號嗎？", "請再次確認：刪除後會立即登出，且無法復原。")) return;
     setState({ ...state, directors: state.directors.filter((director) => director.id !== session.user.id) });
     setSession(null);
     setNotice("主任帳號已刪除並登出。");
@@ -820,7 +863,7 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
       </div>
 
       {directorTab === "employees" && (
-        <EmployeeSchedulePanel employees={groupEmployees} onDelete={deleteEmployee} />
+        <EmployeeSchedulePanel employees={groupEmployees} onDelete={deleteEmployee} onToggleManager={toggleManager} />
       )}
 
       {directorTab === "dashboard" && (
@@ -919,7 +962,7 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
         )}
       </div>
 
-      <ScheduleList state={state} setState={setState} viewer={{ role: "director" }} setNotice={setNotice} onDelete={deleteSchedule} />
+      <ScheduleList state={state} setState={setState} viewer={{ role: "director", user: session.user }} setNotice={setNotice} onDelete={deleteSchedule} />
 
       <MessagePanel state={state} viewer={{ role: "director", user: session.user }} />
         </>
@@ -934,17 +977,6 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
           <input type="email" value={session.user.email || ""} onChange={(event) => updateDirectorEmail(event.target.value)} placeholder="director@example.com" />
         </label>
         <p className="muted">Email 會用在排程通知收件人與寄件紀錄。正式寄送需要接後端郵件服務；目前會先開啟系統郵件草稿。</p>
-      </div>
-
-      <div className="panel">
-        <SectionTitle icon={<ShieldCheck size={20} />} title="建立主任端" />
-        <form onSubmit={addDirector} className="compact-form">
-          <input value={directorForm.name} onChange={(event) => setDirectorForm({ ...directorForm, name: event.target.value })} placeholder="主任姓名" />
-          <input value={directorForm.username} onChange={(event) => setDirectorForm({ ...directorForm, username: event.target.value })} placeholder="主任帳號" />
-          <input type="password" value={directorForm.password} onChange={(event) => setDirectorForm({ ...directorForm, password: event.target.value })} placeholder="主任密碼" />
-          <input type="email" value={directorForm.email} onChange={(event) => setDirectorForm({ ...directorForm, email: event.target.value })} placeholder="主任 Email" />
-          <button className="secondary-action" type="submit"><UserPlus size={16} /> 建立</button>
-        </form>
       </div>
 
       <div className="panel">
@@ -970,7 +1002,7 @@ const WEEK_DAYS = [
   ["0", "週日"],
 ];
 
-function EmployeeSchedulePanel({ employees, onDelete, onAddSegment, onRemoveSegment, onUpdateSegment }) {
+function EmployeeSchedulePanel({ employees, onDelete, onToggleManager }) {
   return (
     <div className="panel schedule-admin-panel">
       <SectionTitle icon={<Users size={20} />} title="員工資料" />
@@ -990,7 +1022,11 @@ function EmployeeSchedulePanel({ employees, onDelete, onAddSegment, onRemoveSegm
               <span>群組：{employee.groupCode}</span>
               <span>Email：{employee.email || "未設定"}</span>
               <span>建立時間：{employee.createdAt ? new Date(employee.createdAt).toLocaleString("zh-TW") : "--"}</span>
+              <span>權限：{employee.isManager ? "代理管理者" : "一般員工"}</span>
             </div>
+            <button className={employee.isManager ? "secondary-action danger-action" : "secondary-action"} type="button" onClick={() => onToggleManager(employee.id)}>
+              <ShieldCheck size={16} /> {employee.isManager ? "取消代理管理權" : "賦予代理管理權"}
+            </button>
           </article>
         ))}
       </div>
@@ -1051,8 +1087,8 @@ function EmployeeView({ state, setState, session, setSession, setNotice }) {
 
   function clock(type) {
     const today = todayDate();
-    const existing = state.attendance.find((item) => item.employeeId === session.user.id && item.date === today);
-    if (type === "in" && existing?.clockIn) {
+    const existing = latestAttendanceRecord(state.attendance, session.user.id);
+    if (type === "in" && existing?.clockIn && !existing.clockOut) {
       setNotice("今天已經上班打卡。");
       return;
     }
@@ -1060,20 +1096,23 @@ function EmployeeView({ state, setState, session, setSession, setNotice }) {
       setNotice("請先上班打卡。");
       return;
     }
+    if (type === "out" && existing.clockOut) {
+      setNotice("目前沒有上班中的紀錄，請先重新上班。");
+      return;
+    }
     if (type === "out" && existing?.requestedClockOut && !existing?.clockOutApproved) {
       setNotice("下班申請已送出，等待主任核准。");
       return;
     }
-    const nextAttendance = existing
+    const nextAttendance = type === "out"
       ? state.attendance.map((item) => item.id === existing.id ? { ...item, requestedClockOut: nowTime(), clockOutApproved: false } : item)
-      : [{ id: crypto.randomUUID(), employeeId: session.user.id, date: today, clockIn: nowTime(), clockOut: "", requestedClockOut: "", clockOutApproved: false }, ...state.attendance];
+      : [{ id: crypto.randomUUID(), employeeId: session.user.id, date: today, clockIn: nowTime(), clockOut: "", requestedClockOut: "", clockOutApproved: false, createdAt: new Date().toISOString() }, ...state.attendance];
     setState({ ...state, attendance: nextAttendance });
     setNotice(type === "in" ? "上班打卡完成。" : "下班申請已送出，需主任核准後才算完成。");
   }
 
   function forceClockOut() {
-    const today = todayDate();
-    const existing = state.attendance.find((item) => item.employeeId === session.user.id && item.date === today);
+    const existing = latestAttendanceRecord(state.attendance, session.user.id);
     if (!existing?.clockIn) {
       setNotice("請先上班打卡，才能強制下班。");
       return;
@@ -1102,7 +1141,7 @@ function EmployeeView({ state, setState, session, setSession, setNotice }) {
   }
 
   function deleteOwnEmployeeAccount() {
-    if (!window.confirm("確定要刪除自己的員工帳號嗎？刪除後會立即登出，考勤與排程回覆也會一併移除。")) return;
+    if (!confirmTwice("確定要刪除自己的員工帳號嗎？", "請再次確認：刪除後會立即登出，考勤與排程回覆也會一併移除。")) return;
     setState({
       ...state,
       employees: state.employees.filter((employee) => employee.id !== session.user.id),
@@ -1122,7 +1161,7 @@ function EmployeeView({ state, setState, session, setSession, setNotice }) {
           <span className={`status ${status.tone}`}>{status.label}</span>
         </div>
         <div className="action-row">
-          <button className="primary-action" onClick={() => clock("in")}><CheckCircle2 size={18} /> 上班</button>
+          <button className="primary-action" onClick={() => clock("in")}><CheckCircle2 size={18} /> {status.record?.clockOut ? "重新上班" : "上班"}</button>
           <button className="secondary-action" onClick={() => clock("out")}><LogOut size={18} /> 下班申請</button>
         </div>
         <button className="secondary-action force-action" onClick={forceClockOut}>
