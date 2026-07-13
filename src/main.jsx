@@ -219,6 +219,21 @@ function useAppState() {
     return () => window.clearTimeout(timer);
   }, [state, cloudReady]);
 
+  useEffect(() => {
+    if (!cloudEnabled || !cloudReady) return;
+    const timer = window.setInterval(() => {
+      loadCloudState(readState())
+        .then((cloudState) => {
+          const normalized = normalizeState(cloudState);
+          setState(normalized);
+          writeState(normalized);
+          setCloudStatus("雲端同步");
+        })
+        .catch(() => setCloudStatus("雲端同步失敗"));
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [cloudReady]);
+
   return [state, setState, cloudStatus];
 }
 
@@ -226,7 +241,7 @@ function App() {
   const [state, setState, cloudStatus] = useAppState();
   const [session, setSession] = useState(() => {
     try {
-      return JSON.parse(sessionStorage.getItem("daily-scheduler-session") || "null");
+      return JSON.parse(localStorage.getItem("daily-scheduler-session") || "null");
     } catch {
       return null;
     }
@@ -234,8 +249,26 @@ function App() {
   const [notice, setNotice] = useState("");
 
   useEffect(() => {
-    sessionStorage.setItem("daily-scheduler-session", JSON.stringify(session));
+    if (session) {
+      localStorage.setItem("daily-scheduler-session", JSON.stringify(session));
+    } else {
+      localStorage.removeItem("daily-scheduler-session");
+    }
   }, [session]);
+
+  useEffect(() => {
+    if (!session) return;
+    const users = session.role === "director" ? state.directors : state.employees;
+    const freshUser = users.find((user) => user.id === session.user.id);
+    if (!freshUser) {
+      setSession(null);
+      setNotice("此帳號已不存在，已自動登出。");
+      return;
+    }
+    if (JSON.stringify(freshUser) !== JSON.stringify(session.user)) {
+      setSession({ ...session, user: freshUser });
+    }
+  }, [state.directors, state.employees, session]);
 
   useEffect(() => {
     if ("serviceWorker" in navigator) {
@@ -258,25 +291,22 @@ function App() {
         }
       });
 
-      if (session.role === "employee") {
-        const startTime = todayShiftStart(session.user);
-        if (!startTime) {
-          sessionStorage.setItem("sent-schedule-notices", JSON.stringify([...sent]));
-          return;
-        }
-        const startAt = new Date(`${todayDate()}T${startTime}:00`);
-        const workKey = `work-start-${session.user.id}-${todayDate()}`;
-        const workDiff = startAt.getTime() - now.getTime();
-        if (workDiff <= 10 * 60 * 1000 && workDiff > -5 * 60 * 1000 && !sent.has(workKey)) {
-          new Notification("上班提醒", { body: `距離 ${startTime} 上班時間剩約 10 分鐘。` });
-          sent.add(workKey);
-        }
-      }
-
       sessionStorage.setItem("sent-schedule-notices", JSON.stringify([...sent]));
     }, 30000);
     return () => window.clearInterval(timer);
   }, [session, state.schedules]);
+
+  useEffect(() => {
+    if (!session || !("Notification" in window) || Notification.permission !== "granted") return;
+    const sent = new Set(JSON.parse(localStorage.getItem("sent-message-notices") || "[]"));
+    state.messages.forEach((message) => {
+      if (isMessageVisible(message, session) && !sent.has(message.id)) {
+        new Notification(`群發消息：${message.title}`, { body: message.text });
+        sent.add(message.id);
+      }
+    });
+    localStorage.setItem("sent-message-notices", JSON.stringify([...sent]));
+  }, [session, state.messages]);
 
   function logout() {
     setSession(null);
@@ -684,7 +714,7 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
       </div>
 
       {directorTab === "employees" && (
-        <EmployeeSchedulePanel employees={groupEmployees} onDelete={deleteEmployee} onAddSegment={addShiftSegment} onRemoveSegment={removeShiftSegment} onUpdateSegment={updateEmployeeSchedule} />
+        <EmployeeSchedulePanel employees={groupEmployees} onDelete={deleteEmployee} />
       )}
 
       {directorTab === "dashboard" && (
@@ -837,7 +867,7 @@ const WEEK_DAYS = [
 function EmployeeSchedulePanel({ employees, onDelete, onAddSegment, onRemoveSegment, onUpdateSegment }) {
   return (
     <div className="panel schedule-admin-panel">
-      <SectionTitle icon={<Users size={20} />} title="員工資料與每週排班" />
+      <SectionTitle icon={<Users size={20} />} title="員工資料" />
       <div className="staff-admin-list">
         {employees.map((employee) => (
           <article className="staff-admin-card" key={employee.id}>
@@ -850,31 +880,10 @@ function EmployeeSchedulePanel({ employees, onDelete, onAddSegment, onRemoveSegm
                 <Trash2 size={18} />
               </button>
             </div>
-            <div className="week-grid">
-              {WEEK_DAYS.map(([day, label]) => {
-                const segments = employee.weeklySchedule?.[day] || [];
-                return (
-                  <div className="day-card" key={day}>
-                    <div className="day-title">
-                      <b>{label}</b>
-                      <button type="button" className="mini-button" onClick={() => onAddSegment(employee.id, day)}>加班段</button>
-                    </div>
-                    {segments.length ? (
-                      segments.map((segment, index) => (
-                        <div className="shift-row" key={`${day}-${index}`}>
-                          <input type="time" value={segment.start} onChange={(event) => onUpdateSegment(employee.id, day, index, "start", event.target.value)} />
-                          <input type="time" value={segment.end} onChange={(event) => onUpdateSegment(employee.id, day, index, "end", event.target.value)} />
-                          <button type="button" className="icon-button danger tiny-icon" onClick={() => onRemoveSegment(employee.id, day, index)} title="刪除此班段">
-                            <X size={15} />
-                          </button>
-                        </div>
-                      ))
-                    ) : (
-                      <span className="muted">無排班</span>
-                    )}
-                  </div>
-                );
-              })}
+            <div className="staff-meta-grid">
+              <span>群組：{employee.groupCode}</span>
+              <span>Email：{employee.email || "未設定"}</span>
+              <span>建立時間：{employee.createdAt ? new Date(employee.createdAt).toLocaleString("zh-TW") : "--"}</span>
             </div>
           </article>
         ))}
@@ -924,7 +933,6 @@ function BroadcastPanel({ state, setState, session, setNotice }) {
 
 function EmployeeView({ state, setState, session, setSession, setNotice }) {
   const status = statusForEmployee(state.attendance, session.user.id);
-  const todaySegments = session.user.weeklySchedule?.[String(new Date().getDay())] || [];
 
   function clock(type) {
     const today = todayDate();
@@ -991,13 +999,7 @@ function EmployeeView({ state, setState, session, setSession, setNotice }) {
           電子郵件
           <input type="email" value={session.user.email || ""} onChange={(event) => updateEmployee("email", event.target.value)} placeholder="name@example.com" />
         </label>
-        <div className="today-shifts">
-          <strong>今日班表</strong>
-          {todaySegments.length ? todaySegments.map((segment, index) => (
-            <span key={index}>{segment.start} - {segment.end}</span>
-          )) : <span>今日無排班</span>}
-        </div>
-        <p className="muted">上班時間由主任端設定。開啟瀏覽器通知後，系統會在今日第一段上班前 10 分鐘提醒。</p>
+        <p className="muted">目前只保留上班與下班打卡。下班仍需主任核准。</p>
         <button className="secondary-action danger-action" type="button" onClick={deleteOwnEmployeeAccount}>
           <Trash2 size={16} /> 刪除我的員工帳號
         </button>
@@ -1200,13 +1202,13 @@ function NotificationPanel({ setNotice }) {
       return;
     }
     const permission = await Notification.requestPermission();
-    setNotice(permission === "granted" ? "通知已開啟。排程前 10 分鐘與上班前 10 分鐘會提醒。" : "通知尚未開啟。");
+    setNotice(permission === "granted" ? "通知已開啟。排程提醒與群發消息會跳通知。" : "通知尚未開啟。");
   }
 
   return (
     <div className="panel">
       <SectionTitle icon={<Bell size={20} />} title="通知設定" />
-      <p className="muted">目前提供大屏幕橫幅、瀏覽器通知、Email 草稿、手機訊息複製。真正背景推播到手機或自動寄 Email，需要接後端服務。</p>
+      <p className="muted">開啟後，排程提醒與群發消息會跳瀏覽器通知。自動寄 Email 需要再接 Resend、SendGrid 或 Supabase Edge Function；目前仍提供 Email 草稿。</p>
       <button className="secondary-action" onClick={requestPermission}><Bell size={16} /> 開啟通知</button>
     </div>
   );

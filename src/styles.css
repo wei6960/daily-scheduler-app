@@ -648,6 +648,14 @@ textarea:focus {
   font-size: 0.88rem;
 }
 
+.staff-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
 .week-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(130px, 1fr));
@@ -779,6 +787,10 @@ textarea:focus {
   }
 
   .code-edit-form {
+    grid-template-columns: 1fr;
+  }
+
+  .staff-meta-grid {
     grid-template-columns: 1fr;
   }
 }

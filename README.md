@@ -65,3 +65,15 @@ GitHub Pages 也支援自動部署：到 GitHub repo 的 `Settings` → `Secrets
 有設定 Supabase 時，主任、員工、群組代碼、排程、考勤、留言會同步到雲端。未設定時會顯示「本機模式」，資料只存在目前瀏覽器。
 
 目前通知仍是瀏覽器通知與 Email 草稿。真正背景手機推播或自動寄信，需要再接通知服務。
+
+## Email 自動寄送
+
+瀏覽器前端不能安全地直接自動寄 Email，因為 Email API 金鑰不能放在公開網站裡。
+
+若要排程或群發消息自動寄到員工信箱，建議下一步接：
+
+- Supabase Edge Function
+- Resend 或 SendGrid
+- 一組後端專用 API key
+
+目前 APP 會保留 Email 草稿功能；自動寄信需要加後端寄信函式。
