@@ -50,7 +50,7 @@ button:disabled {
 .hero-band {
   min-height: 210px;
   display: flex;
-  align-items: flex-start;
+  align-items: stretch;
   justify-content: space-between;
   gap: 24px;
   color: #f8f5ee;
@@ -60,6 +60,43 @@ button:disabled {
   border-radius: 8px;
   padding: clamp(24px, 5vw, 48px);
   box-shadow: 0 24px 70px rgba(38, 48, 60, 0.18);
+}
+
+.hero-highlight {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  max-width: 360px;
+  padding: 16px 18px;
+  border: 1px solid rgba(248, 245, 238, 0.2);
+  border-radius: 14px;
+  background: rgba(255, 253, 248, 0.12);
+  backdrop-filter: blur(8px);
+}
+
+.hero-highlight strong {
+  font-size: 1.08rem;
+  line-height: 1.35;
+}
+
+.hero-highlight p {
+  margin: 0;
+  color: rgba(248, 245, 238, 0.88);
+  line-height: 1.5;
+}
+
+.hero-highlight-label {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  color: var(--navy);
+  background: #f5d39f;
+  font-size: 0.8rem;
+  font-weight: 900;
+  letter-spacing: 0.02em;
 }
 
 .hero-band h1 {
@@ -671,6 +708,10 @@ textarea:focus {
   gap: 10px;
 }
 
+.broadcast-message-list {
+  margin-top: 14px;
+}
+
 .leave-item {
   display: flex;
   align-items: flex-start;
@@ -973,6 +1014,10 @@ textarea:focus {
   min-height: 48px;
 }
 
+.notice-actions {
+  margin-top: 4px;
+}
+
 .force-action {
   width: 100%;
   margin-top: 10px;
@@ -989,6 +1034,15 @@ textarea:focus {
 
   .visual-panel {
     min-height: 300px;
+  }
+
+  .hero-band {
+    flex-direction: column;
+  }
+
+  .hero-highlight {
+    max-width: none;
+    width: 100%;
   }
 
   .compact-form {

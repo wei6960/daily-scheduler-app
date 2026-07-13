@@ -338,6 +338,7 @@ function App() {
   });
   const [notice, setNotice] = useState("");
   const [currentTime, setCurrentTime] = useState(Date.now());
+  const [heroNotice, setHeroNotice] = useState(null);
   const [dismissedNoticeIds, setDismissedNoticeIds] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem("dismissed-app-notices") || "[]");
@@ -374,6 +375,24 @@ function App() {
   }, [currentTime, session, state.messages, state.schedules]);
 
   const unreadNotices = appNotices.filter((item) => !dismissedNoticeIds.includes(item.id));
+
+  useEffect(() => {
+    if (!session) {
+      setHeroNotice(null);
+      return;
+    }
+    if (!appNotices.length) return;
+    const upcomingSchedule = appNotices
+      .filter((item) => item.id.startsWith("schedule-") && new Date(item.createdAt).getTime() >= currentTime)
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())[0];
+    if (upcomingSchedule) {
+      setHeroNotice(upcomingSchedule);
+      return;
+    }
+    if (!heroNotice || !appNotices.some((item) => item.id === heroNotice.id)) {
+      setHeroNotice(appNotices[0]);
+    }
+  }, [appNotices, currentTime, heroNotice, session]);
 
   useEffect(() => {
     if (session) {
@@ -424,6 +443,17 @@ function App() {
         <div>
           <div className="eyebrow"><Sparkles size={16} /> 質感排程與考勤</div>
           <h1>每日重點、通知與上下班狀態集中管理</h1>
+        </div>
+        <div className="hero-highlight">
+          <span className="hero-highlight-label">????</span>
+          {heroNotice ? (
+            <>
+              <strong>{heroNotice.title}</strong>
+              <p>{heroNotice.text}</p>
+            </>
+          ) : (
+            <p>??????????????????????</p>
+          )}
         </div>
         {session && (
           <button className="icon-button ghost" onClick={logout} title="登出">
@@ -1049,7 +1079,6 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
         editorLabel="主任"
         viewer={session}
         setNotice={setNotice}
-        setNotice={setNotice}
       />
 
       <BroadcastPanel state={state} setState={setState} session={session} setNotice={setNotice} />
@@ -1160,41 +1189,99 @@ function EmployeeSchedulePanel({ employees, onDelete, onToggleManager, onToggleC
 }
 
 function BroadcastPanel({ state, setState, session, setNotice }) {
-  const [message, setMessage] = useState({ title: "", text: "", audience: "all" });
+  const [draft, setDraft] = useState({ title: "", text: "", audience: "all" });
+  const [editingId, setEditingId] = useState("");
   const groupEmployees = state.employees.filter((employee) => employee.groupCode === session.user.groupCode);
+  const messages = state.messages
+    .filter((message) => message.groupCode === session.user.groupCode)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   function sendMessage(event) {
     event.preventDefault();
-    if (!message.title.trim() || !message.text.trim()) {
-      setNotice("請填寫注意事項標題與內容。");
+    if (!draft.title.trim() || !draft.text.trim()) {
+      setNotice("?????????????");
       return;
     }
-    const newMessage = { ...message, groupCode: session.user.groupCode, id: crypto.randomUUID(), title: message.title.trim(), text: message.text.trim(), createdAt: new Date().toISOString() };
+    const previous = editingId ? state.messages.find((item) => item.id === editingId) : null;
+    const nextMessage = {
+      ...(previous || {}),
+      groupCode: session.user.groupCode,
+      id: editingId || crypto.randomUUID(),
+      title: draft.title.trim(),
+      text: draft.text.trim(),
+      audience: draft.audience,
+      createdAt: previous?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
     setState({
       ...state,
-      messages: [
-        newMessage,
-        ...state.messages,
-      ],
+      messages: editingId
+        ? state.messages.map((item) => (item.id === editingId ? nextMessage : item))
+        : [nextMessage, ...state.messages],
     });
-    setMessage({ title: "", text: "", audience: "all" });
-    setNotice("注意事項已送出。");
+    setDraft({ title: "", text: "", audience: "all" });
+    setEditingId("");
+    setNotice(editingId ? "????????" : "????????");
+  }
+
+  function startEdit(message) {
+    setEditingId(message.id);
+    setDraft({ title: message.title || "", text: message.text || "", audience: message.audience || "all" });
+  }
+
+  function cancelEdit() {
+    setEditingId("");
+    setDraft({ title: "", text: "", audience: "all" });
+    setNotice("??????");
+  }
+
+  function deleteMessage(messageId) {
+    if (!window.confirm("?????????????")) return;
+    setState({
+      ...state,
+      messages: state.messages.filter((item) => item.id !== messageId),
+    });
+    if (editingId === messageId) {
+      setEditingId("");
+      setDraft({ title: "", text: "", audience: "all" });
+    }
+    setNotice("????????");
   }
 
   return (
     <div className="panel">
-      <SectionTitle icon={<Send size={20} />} title="注意事項發送" />
+      <SectionTitle icon={<Send size={20} />} title="??????" />
       <form onSubmit={sendMessage} className="compact-stack">
-        <input value={message.title} onChange={(event) => setMessage({ ...message, title: event.target.value })} placeholder="注意事項標題" />
-        <textarea value={message.text} onChange={(event) => setMessage({ ...message, text: event.target.value })} placeholder="要發送給員工的注意事項內容" />
-        <select value={message.audience} onChange={(event) => setMessage({ ...message, audience: event.target.value })}>
-          <option value="all">全體員工</option>
+        <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="??????" />
+        <textarea value={draft.text} onChange={(event) => setDraft({ ...draft, text: event.target.value })} placeholder="?????????????" />
+        <select value={draft.audience} onChange={(event) => setDraft({ ...draft, audience: event.target.value })}>
+          <option value="all">????</option>
           {groupEmployees.map((employee) => (
             <option key={employee.id} value={employee.id}>{employee.name}</option>
           ))}
         </select>
-        <button className="primary-action" type="submit"><Send size={18} /> 發送</button>
+        <div className="action-row notice-actions">
+          {editingId ? (
+            <button className="secondary-action" type="button" onClick={cancelEdit}>????</button>
+          ) : null}
+          <button className="primary-action" type="submit"><Send size={18} /> {editingId ? "??" : "??"}</button>
+        </div>
       </form>
+      <div className="message-list broadcast-message-list">
+        {messages.length ? messages.map((message) => (
+          <article className="message-item" key={message.id}>
+            <div>
+              <strong>{message.title}</strong>
+              <p>{message.text}</p>
+              <small>{new Date(message.updatedAt || message.createdAt).toLocaleString("zh-TW")}?{message.audience === "all" ? "????" : "????"}</small>
+            </div>
+            <div className="inline-actions">
+              <button className="secondary-action small-action" type="button" onClick={() => startEdit(message)}>??</button>
+              <button className="secondary-action danger-action small-action" type="button" onClick={() => deleteMessage(message.id)}>??</button>
+            </div>
+          </article>
+        )) : <p className="muted">?????????</p>}
+      </div>
     </div>
   );
 }
@@ -1461,6 +1548,16 @@ function ScheduleList({ state, setState, viewer, setNotice, onDelete, canManage 
     return { targetEmployees, responses, received, completed };
   }
 
+  function resetTodayResponses(item) {
+    if (!window.confirm(`確定要重製「${item.title}」今天的收到/完成紀錄嗎？`)) return;
+    const date = responseDate(item);
+    setState({
+      ...state,
+      scheduleResponses: state.scheduleResponses.filter((response) => response.scheduleId !== item.id || response.date !== date),
+    });
+    setNotice("已重製今日固定流程，員工可重新按收到與完成。");
+  }
+
   return (
     <div className="panel schedule-panel">
       <SectionTitle icon={<ClipboardList size={20} />} title="排程事項" />
@@ -1504,9 +1601,16 @@ function ScheduleList({ state, setState, viewer, setNotice, onDelete, canManage 
                   <MessageCircle size={18} />
                 </button>
                 {(viewer.role === "director" || canManage) && (
-                  <button className="icon-button danger" onClick={() => onDelete(item.id)} title="刪除排程">
-                    <Trash2 size={18} />
-                  </button>
+                  <>
+                    {item.type === "fixed" && (
+                      <button className="icon-button" onClick={() => resetTodayResponses(item)} title="重製今日流程">
+                        <RotateCw size={18} />
+                      </button>
+                    )}
+                    <button className="icon-button danger" onClick={() => onDelete(item.id)} title="刪除排程">
+                      <Trash2 size={18} />
+                    </button>
+                  </>
                 )}
               </div>
             </article>
