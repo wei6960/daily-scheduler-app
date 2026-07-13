@@ -142,10 +142,18 @@ function normalizeState(input) {
     schedules,
     attendance,
     scheduleResponses: source.scheduleResponses || [],
-    leaveEntries: source.leaveEntries || [],
+    leaveEntries: (source.leaveEntries || []).map((item) => ({
+      leaveDate: item.leaveDate || item.date || todayDate(),
+      className: item.className || item.grade || "",
+      studentName: item.studentName || item.name || "",
+      note: item.note || "",
+      groupCode: item.groupCode || "GMPJ",
+      createdBy: item.createdBy || "",
+      ...item,
+    })),
     reportEntries: source.reportEntries || [],
     messages: (source.messages || []).map((item) => ({ groupCode: item.groupCode || "GMPJ", ...item })),
-    boardPosts: (source.boardPosts || defaultState.boardPosts).map((item) => ({ groupCode: item.groupCode || "GMPJ", ...item })),
+    boardPosts: (source.boardPosts || defaultState.boardPosts).map((item) => ({ groupCode: item.groupCode || "GMPJ", createdBy: item.createdBy || "", ...item })),
   };
 }
 
@@ -729,7 +737,15 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
     setState({
       ...state,
       leaveEntries: [
-        { id: crypto.randomUUID(), groupCode: session.user.groupCode, createdBy: session.user.id, createdByName: session.user.name, createdByRole: session.role, createdAt: new Date().toISOString(), ...entry },
+        {
+          id: crypto.randomUUID(),
+          groupCode: session.user.groupCode,
+          createdBy: session.user.id,
+          createdByName: session.user.name,
+          createdByRole: session.role,
+          createdAt: new Date().toISOString(),
+          ...entry,
+        },
         ...state.leaveEntries,
       ],
     });
@@ -739,6 +755,13 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
     setState({
       ...state,
       leaveEntries: state.leaveEntries.filter((entry) => entry.id !== entryId),
+    });
+  }
+
+  function updateLeaveEntry(entryId, patch) {
+    setState({
+      ...state,
+      leaveEntries: state.leaveEntries.map((entry) => (entry.id === entryId ? { ...entry, ...patch, updatedAt: new Date().toISOString() } : entry)),
     });
   }
 
@@ -1000,8 +1023,10 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
         entries={leaveEntries}
         canEdit={true}
         onAddEntry={addLeaveEntry}
+        onUpdateEntry={updateLeaveEntry}
         onDeleteEntry={deleteLeaveEntry}
         editorLabel="主任"
+        viewer={session}
       />
 
       <ReportPanel
@@ -1278,8 +1303,10 @@ function EmployeeView({ state, setState, session, setSession, setNotice }) {
         entries={leaveEntries}
         canEdit={canEditLeave}
         onAddEntry={addLeaveEntry}
+        onUpdateEntry={updateLeaveEntry}
         onDeleteEntry={deleteLeaveEntry}
         editorLabel={session.user.name}
+        viewer={session}
       />
 
       <ReportPanel
@@ -1466,12 +1493,27 @@ function BoardPanel({ state, setState, session, setNotice }) {
     setState({
       ...state,
       boardPosts: [
-        { id: crypto.randomUUID(), groupCode: session.user.groupCode, authorName: session.user.name, authorRole: session.role, text: text.trim(), createdAt: new Date().toISOString() },
+        {
+          id: crypto.randomUUID(),
+          groupCode: session.user.groupCode,
+          authorName: session.user.name,
+          authorRole: session.role,
+          createdBy: session.user.id,
+          text: text.trim(),
+          createdAt: new Date().toISOString(),
+        },
         ...state.boardPosts,
       ],
     });
     setText("");
     setNotice("留言已送出。");
+  }
+
+  function deletePost(postId) {
+    setState({
+      ...state,
+      boardPosts: state.boardPosts.filter((post) => post.id !== postId),
+    });
   }
 
   return (
@@ -1489,6 +1531,34 @@ function BoardPanel({ state, setState, session, setNotice }) {
               <span>{post.authorRole === "director" ? "主任" : "員工"}｜{new Date(post.createdAt).toLocaleString("zh-TW")}</span>
             </div>
             <p>{post.text}</p>
+            <div className="inline-actions board-actions">
+              {(session.role === "director" || post.createdBy === session.user.id) && (
+                <>
+                  <button className="secondary-action small-action" type="button" onClick={() => {
+                    const nextText = window.prompt("編輯留言內容", post.text);
+                    if (nextText === null) return;
+                    if (!nextText.trim()) {
+                      setNotice("留言內容不能空白。");
+                      return;
+                    }
+                    setState({
+                      ...state,
+                      boardPosts: state.boardPosts.map((item) => item.id === post.id ? { ...item, text: nextText.trim(), updatedAt: new Date().toISOString() } : item),
+                    });
+                    setNotice("留言已更新。");
+                  }}>
+                    編輯
+                  </button>
+                  <button className="secondary-action danger-action small-action" type="button" onClick={() => {
+                    if (!window.confirm("確定要刪除這則留言嗎？")) return;
+                    deletePost(post.id);
+                    setNotice("留言已刪除。");
+                  }}>
+                    刪除
+                  </button>
+                </>
+              )}
+            </div>
           </article>
         ))}
       </div>
@@ -1497,11 +1567,6 @@ function BoardPanel({ state, setState, session, setNotice }) {
 }
 
 function ManpowerPanel({ employees, activeStaff, totalStaff, leaveEntries }) {
-  const leaveCounts = LEAVE_GRADES.map((grade) => ({
-    grade,
-    count: leaveEntries.filter((entry) => entry.grade === grade).length,
-  }));
-
   return (
     <div className="panel manpower-panel">
       <SectionTitle icon={<Users size={20} />} title="目前人力" />
@@ -1514,26 +1579,23 @@ function ManpowerPanel({ employees, activeStaff, totalStaff, leaveEntries }) {
           <span className="info-tag" key={`${record.employeeId}-${record.id}`}>{employees.find((employee) => employee.id === record.employeeId)?.name || record.employeeId}</span>
         )) : <span className="muted">目前沒有員工在班。</span>}
       </div>
-      <div className="leave-grade-row">
-        {leaveCounts.map((item) => (
-          <span className="info-tag" key={item.grade}>{item.grade} {item.count}</span>
-        ))}
-      </div>
     </div>
   );
 }
 
-function LeavePanel({ entries, canEdit, onAddEntry, onDeleteEntry, editorLabel }) {
-  const [draft, setDraft] = useState({ grade: LEAVE_GRADES[0], note: "" });
+function LeavePanel({ entries, canEdit, onAddEntry, onUpdateEntry, onDeleteEntry, editorLabel, viewer }) {
+  const [draft, setDraft] = useState({ leaveDate: todayDate(), className: "", studentName: "", note: "" });
 
   function submit(event) {
     event.preventDefault();
-    if (!draft.note.trim()) return;
+    if (!draft.leaveDate || !draft.className.trim() || !draft.studentName.trim()) return;
     onAddEntry({
-      grade: draft.grade,
+      leaveDate: draft.leaveDate,
+      className: draft.className.trim(),
+      studentName: draft.studentName.trim(),
       note: draft.note.trim(),
     });
-    setDraft({ grade: LEAVE_GRADES[0], note: "" });
+    setDraft({ leaveDate: todayDate(), className: "", studentName: "", note: "" });
   }
 
   return (
@@ -1542,13 +1604,19 @@ function LeavePanel({ entries, canEdit, onAddEntry, onDeleteEntry, editorLabel }
       {canEdit ? (
         <form className="leave-form" onSubmit={submit}>
           <label>
-            年級
-            <select value={draft.grade} onChange={(event) => setDraft({ ...draft, grade: event.target.value })}>
-              {LEAVE_GRADES.map((grade) => <option key={grade} value={grade}>{grade}</option>)}
-            </select>
+            請假日期
+            <input type="date" value={draft.leaveDate} onChange={(event) => setDraft({ ...draft, leaveDate: event.target.value })} />
+          </label>
+          <label>
+            班級
+            <input value={draft.className} onChange={(event) => setDraft({ ...draft, className: event.target.value })} placeholder="例如：國一甲" />
+          </label>
+          <label>
+            姓名
+            <input value={draft.studentName} onChange={(event) => setDraft({ ...draft, studentName: event.target.value })} placeholder="學生姓名" />
           </label>
           <label className="wide">
-            特殊事由留言欄
+            事由
             <textarea value={draft.note} onChange={(event) => setDraft({ ...draft, note: event.target.value })} placeholder="例如：發燒、補習、家長接送..." />
           </label>
           <button className="primary-action" type="submit">由 {editorLabel} 新增請假</button>
@@ -1560,15 +1628,45 @@ function LeavePanel({ entries, canEdit, onAddEntry, onDeleteEntry, editorLabel }
         {entries.length ? entries.map((entry) => (
           <article className="leave-item" key={entry.id}>
             <div>
-              <strong>{entry.grade}</strong>
-              <p>{entry.note}</p>
+              <strong>{entry.studentName || "未命名"}｜{entry.className || "未填班級"}</strong>
+              <p>{entry.leaveDate || "未填日期"}｜{entry.note || "無事由"}</p>
               <small>{entry.createdByName || "系統"}｜{new Date(entry.createdAt).toLocaleString("zh-TW")}</small>
             </div>
-            {canEdit && (
-              <button className="icon-button danger" onClick={() => onDeleteEntry(entry.id)} title="刪除請假">
-                <Trash2 size={18} />
-              </button>
-            )}
+            <div className="inline-actions">
+              {(viewer.role === "director" || entry.createdBy === viewer.user.id) && (
+                <>
+                  <button className="secondary-action small-action" type="button" onClick={() => {
+                    const nextLeaveDate = window.prompt("請假日期", entry.leaveDate || todayDate());
+                    if (nextLeaveDate === null) return;
+                    const nextClassName = window.prompt("班級", entry.className || "");
+                    if (nextClassName === null) return;
+                    const nextStudentName = window.prompt("姓名", entry.studentName || "");
+                    if (nextStudentName === null) return;
+                    const nextNote = window.prompt("事由", entry.note || "");
+                    if (nextNote === null) return;
+                    if (!nextLeaveDate.trim() || !nextClassName.trim() || !nextStudentName.trim()) {
+                      setNotice("請假日期、班級、姓名都不能空白。");
+                      return;
+                    }
+                    onUpdateEntry(entry.id, {
+                      leaveDate: nextLeaveDate.trim(),
+                      className: nextClassName.trim(),
+                      studentName: nextStudentName.trim(),
+                      note: nextNote.trim(),
+                    });
+                    setNotice("請假已更新。");
+                  }}>
+                    編輯
+                  </button>
+                  <button className="secondary-action danger-action small-action" type="button" onClick={() => {
+                    if (!window.confirm("確定要刪除這筆請假嗎？")) return;
+                    onDeleteEntry(entry.id);
+                  }}>
+                    刪除
+                  </button>
+                </>
+              )}
+            </div>
           </article>
         )) : <p className="muted">目前沒有請假資料。</p>}
       </div>
