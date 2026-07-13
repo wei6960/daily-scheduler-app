@@ -2,6 +2,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
+    "deploy": "npm run build && gh-pages -d dist",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
@@ -12,6 +13,7 @@
     "vite": "latest"
   },
   "devDependencies": {
+    "gh-pages": "^6.3.0",
     "playwright": "^1.61.1"
   }
 }
