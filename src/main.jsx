@@ -326,14 +326,17 @@ function AuthPanel({ state, setState, setSession, setNotice }) {
         return;
       }
 
-      if (!groupCode || !state.groups.some((group) => group.code === groupCode)) {
-        setNotice("請輸入有效的群組代碼。");
+      if (!groupCode) {
+        setNotice("請輸入主任提供的群組代碼。");
         return;
       }
       const employee = { id: crypto.randomUUID(), groupCode, name: form.name.trim(), username, password, email, workStartTime: "09:00", weeklySchedule: defaultWeeklySchedule(), createdAt: new Date().toISOString() };
-      setState({ ...state, employees: [...state.employees, employee] });
+      const groups = state.groups.some((group) => group.code === groupCode)
+        ? state.groups
+        : [...state.groups, { code: groupCode, name: `${groupCode} 群組`, createdAt: new Date().toISOString() }];
+      setState({ ...state, groups, employees: [...state.employees, employee] });
       setSession({ role: "employee", user: employee });
-      setNotice("員工帳號已建立。");
+      setNotice("員工帳號已建立，已加入群組。");
       return;
     }
 
@@ -363,7 +366,7 @@ function AuthPanel({ state, setState, setSession, setNotice }) {
         <div className="glass-meter">
           <CalendarClock size={38} />
           <strong>群組式排程管理</strong>
-          <span>主任註冊建立群組代碼，員工用群組代碼加入後接收排程與打卡。</span>
+          <span>主任註冊建立群組代碼，員工用群組代碼加入。公開版資料先存在各自裝置，正式多人同步需接後端。</span>
         </div>
       </div>
       <form className="panel auth-panel" onSubmit={submit}>
