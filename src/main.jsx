@@ -1037,6 +1037,7 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
         onDeleteEntry={deleteLeaveEntry}
         editorLabel="主任"
         viewer={session}
+        setNotice={setNotice}
       />
 
       <ReportPanel
@@ -1047,6 +1048,7 @@ function DirectorView({ state, setState, session, setSession, setNotice }) {
         onDeleteEntry={deleteReportEntry}
         editorLabel="主任"
         viewer={session}
+        setNotice={setNotice}
         setNotice={setNotice}
       />
 
@@ -1639,12 +1641,15 @@ function ManpowerPanel({ employees, activeStaff, totalStaff, leaveEntries }) {
   );
 }
 
-function LeavePanel({ entries, canEdit, onAddEntry, onUpdateEntry, onDeleteEntry, editorLabel, viewer }) {
+function LeavePanel({ entries, canEdit, onAddEntry, onUpdateEntry, onDeleteEntry, editorLabel, viewer, setNotice }) {
   const [draft, setDraft] = useState({ leaveStartDate: todayDate(), leaveEndDate: todayDate(), className: "", studentName: "", note: "" });
 
   function submit(event) {
     event.preventDefault();
-    if (!draft.leaveStartDate || !draft.leaveEndDate || !draft.className.trim() || !draft.studentName.trim()) return;
+    if (!draft.leaveStartDate || !draft.leaveEndDate || !draft.className.trim() || !draft.studentName.trim()) {
+      setNotice?.("請填寫請假開始日期、結束日期、班級和姓名。");
+      return;
+    }
     onAddEntry({
       leaveStartDate: draft.leaveStartDate,
       leaveEndDate: draft.leaveEndDate,
