@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Bell,
@@ -95,20 +95,20 @@ function nowStamp() {
 
 function normalizeState(input) {
   const source = input || defaultState;
-  const groups = source.groups?.length ? source.groups : defaultState.groups;
-  const employees = (source.employees?.length ? source.employees : defaultState.employees).map((employee) => ({
+  const groups = Array.isArray(source.groups) ? source.groups : defaultState.groups;
+  const employees = (Array.isArray(source.employees) ? source.employees : defaultState.employees).map((employee) => ({
     email: "",
     workStartTime: "09:00",
     groupCode: "GMPJ",
     weeklySchedule: defaultWeeklySchedule(),
     ...employee,
   }));
-  const directors = (source.directors?.length ? source.directors : defaultState.directors).map((director) => ({
+  const directors = (Array.isArray(source.directors) ? source.directors : defaultState.directors).map((director) => ({
     email: "",
     groupCode: "GMPJ",
     ...director,
   }));
-  const schedules = (source.schedules?.length ? source.schedules : defaultState.schedules).map((item) => ({
+  const schedules = (Array.isArray(source.schedules) ? source.schedules : defaultState.schedules).map((item) => ({
     type: item.type || "temporary",
     date: item.date || todayDate(),
     time: item.time || "09:00",
@@ -187,6 +187,8 @@ function useAppState() {
   const [state, setState] = useState(readState);
   const [cloudStatus, setCloudStatus] = useState(cloudEnabled ? "連線中" : "本機模式");
   const [cloudReady, setCloudReady] = useState(!cloudEnabled);
+  const lastLocalWrite = useRef(0);
+  const skipNextSave = useRef(false);
 
   useEffect(() => {
     let active = true;
@@ -195,6 +197,7 @@ function useAppState() {
       .then((cloudState) => {
         if (!active) return;
         const normalized = normalizeState(cloudState);
+        skipNextSave.current = true;
         setState(normalized);
         writeState(normalized);
         setCloudStatus("雲端同步");
@@ -213,6 +216,10 @@ function useAppState() {
   useEffect(() => {
     writeState(state);
     if (!cloudEnabled || !cloudReady) return;
+    if (skipNextSave.current) {
+      skipNextSave.current = false;
+      return;
+    }
     const timer = window.setTimeout(() => {
       saveCloudState(state).catch(() => setCloudStatus("雲端同步失敗"));
     }, 350);
@@ -222,19 +229,26 @@ function useAppState() {
   useEffect(() => {
     if (!cloudEnabled || !cloudReady) return;
     const timer = window.setInterval(() => {
+      if (Date.now() - lastLocalWrite.current < 1200) return;
       loadCloudState(readState())
         .then((cloudState) => {
           const normalized = normalizeState(cloudState);
+          skipNextSave.current = true;
           setState(normalized);
           writeState(normalized);
           setCloudStatus("雲端同步");
         })
         .catch(() => setCloudStatus("雲端同步失敗"));
-    }, 5000);
+    }, 1000);
     return () => window.clearInterval(timer);
   }, [cloudReady]);
 
-  return [state, setState, cloudStatus];
+  function setSyncedState(next) {
+    lastLocalWrite.current = Date.now();
+    setState(next);
+  }
+
+  return [state, setSyncedState, cloudStatus];
 }
 
 function App() {
@@ -247,6 +261,7 @@ function App() {
     }
   });
   const [notice, setNotice] = useState("");
+  const [currentTime, setCurrentTime] = useState(Date.now());
   const [dismissedNoticeIds, setDismissedNoticeIds] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem("dismissed-app-notices") || "[]");
@@ -259,13 +274,17 @@ function App() {
     if (!session) return [];
     const scheduleNotices = state.schedules
       .filter((item) => isVisibleTo(item, session))
-      .map((item) => ({
-        id: `schedule-${item.id}-${scheduleDate(item)}`,
-        type: "排程",
-        title: item.title,
-        text: `${item.type === "fixed" ? "每日" : item.date} ${item.time}｜${item.detail}`,
-        createdAt: `${scheduleDate(item)}T${item.time}:00`,
-      }));
+      .map((item) => {
+        const diff = scheduleDateTime(item).getTime() - currentTime;
+        const type = diff <= 0 && diff > -10 * 60 * 1000 ? "到點" : diff > 0 && diff <= 10 * 60 * 1000 ? "即將" : "排程";
+        return {
+          id: `schedule-${item.id}-${scheduleDate(item)}`,
+          type,
+          title: item.title,
+          text: `${item.type === "fixed" ? "每日" : item.date} ${item.time}｜${item.detail}`,
+          createdAt: `${scheduleDate(item)}T${item.time}:00`,
+        };
+      });
     const messageNotices = state.messages
       .filter((message) => isMessageVisible(message, session))
       .map((message) => ({
@@ -276,7 +295,7 @@ function App() {
         createdAt: message.createdAt,
       }));
     return [...messageNotices, ...scheduleNotices].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [session, state.messages, state.schedules]);
+  }, [currentTime, session, state.messages, state.schedules]);
 
   const unreadNotices = appNotices.filter((item) => !dismissedNoticeIds.includes(item.id));
 
@@ -309,22 +328,35 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const timer = window.setInterval(() => setCurrentTime(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
     if (!session || !("Notification" in window) || Notification.permission !== "granted") return;
     const timer = window.setInterval(() => {
       const now = new Date();
       const sent = new Set(JSON.parse(sessionStorage.getItem("sent-schedule-notices") || "[]"));
 
       state.schedules.forEach((item) => {
-        const itemKey = `${item.id}-${scheduleDate(item)}`;
+        const upcomingKey = `upcoming-${item.id}-${scheduleDate(item)}`;
+        const dueKey = `due-${item.id}-${scheduleDate(item)}`;
         const diff = scheduleDateTime(item).getTime() - now.getTime();
-        if (isVisibleTo(item, session) && diff <= 10 * 60 * 1000 && diff > -5 * 60 * 1000 && !sent.has(itemKey)) {
-          new Notification(`排程提醒：${item.title}`, { body: `${item.time}｜${item.detail}` });
-          sent.add(itemKey);
+        if (!isVisibleTo(item, session)) return;
+        if (diff <= 10 * 60 * 1000 && diff > 0 && !sent.has(upcomingKey)) {
+          new Notification(`即將開始：${item.title}`, { body: `${item.time}｜${item.detail}` });
+          setNotice(`即將開始：${item.title}`);
+          sent.add(upcomingKey);
+        }
+        if (diff <= 0 && diff > -10 * 60 * 1000 && !sent.has(dueKey)) {
+          new Notification(`到點：${item.title}`, { body: item.detail });
+          setNotice(`到點：${item.title}`);
+          sent.add(dueKey);
         }
       });
 
       sessionStorage.setItem("sent-schedule-notices", JSON.stringify([...sent]));
-    }, 30000);
+    }, 1000);
     return () => window.clearInterval(timer);
   }, [session, state.schedules]);
 
