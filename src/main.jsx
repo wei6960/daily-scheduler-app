@@ -1054,6 +1054,29 @@ function EmployeeView({ state, setState, session, setSession, setNotice }) {
     setNotice(type === "in" ? "上班打卡完成。" : "下班申請已送出，需主任核准後才算完成。");
   }
 
+  function forceClockOut() {
+    const today = todayDate();
+    const existing = state.attendance.find((item) => item.employeeId === session.user.id && item.date === today);
+    if (!existing?.clockIn) {
+      setNotice("請先上班打卡，才能強制下班。");
+      return;
+    }
+    if (existing.clockOut) {
+      setNotice("今天已經下班。");
+      return;
+    }
+    const outTime = nowTime();
+    setState({
+      ...state,
+      attendance: state.attendance.map((item) =>
+        item.id === existing.id
+          ? { ...item, requestedClockOut: outTime, clockOut: outTime, clockOutApproved: true, forcedClockOut: true }
+          : item
+      ),
+    });
+    setNotice("已強制下班，今日打卡已結束。");
+  }
+
   function updateEmployee(field, value) {
     const employees = state.employees.map((employee) => (employee.id === session.user.id ? { ...employee, [field]: value } : employee));
     const updatedUser = employees.find((employee) => employee.id === session.user.id);
@@ -1085,6 +1108,9 @@ function EmployeeView({ state, setState, session, setSession, setNotice }) {
           <button className="primary-action" onClick={() => clock("in")}><CheckCircle2 size={18} /> 上班</button>
           <button className="secondary-action" onClick={() => clock("out")}><LogOut size={18} /> 下班申請</button>
         </div>
+        <button className="secondary-action force-action" onClick={forceClockOut}>
+          <LogOut size={18} /> 強制下班
+        </button>
       </div>
 
       <ScheduleList state={state} setState={setState} viewer={session} setNotice={setNotice} />
